@@ -1,0 +1,58 @@
+{
+  "manifest_version": 3,
+  "name": "Turo Toll Reconciler",
+  "version": "0.1.0",
+  "description": "Locally matches E-ZPass NY toll activity to Turo host trip schedules.",
+  "minimum_chrome_version": "111",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://turo.com/*",
+    "https://www.e-zpassny.com/*",
+    "https://e-zpassny.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Turo Toll Reconciler",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://turo.com/*",
+        "https://www.e-zpassny.com/*",
+        "https://e-zpassny.com/*"
+      ],
+      "js": [
+        "network_hook.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://turo.com/*"
+      ],
+      "js": [
+        "content_common.js",
+        "content_turo.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.e-zpassny.com/*",
+        "https://e-zpassny.com/*"
+      ],
+      "js": [
+        "content_common.js",
+        "content_ezpass.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}
