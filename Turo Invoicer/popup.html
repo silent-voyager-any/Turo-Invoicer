@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Turo Toll Reconciler</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">LOCAL RECONCILIATION</p>
+          <h1>Toll matcher</h1>
+        </div>
+        <span id="statusDot" class="status-dot" aria-hidden="true"></span>
+      </header>
+
+      <p class="privacy-note">
+        Uses your open, signed-in portal tabs. Passwords, cookies, and request headers are never read or stored.
+      </p>
+
+      <section class="source-grid" aria-label="Data sources">
+        <a href="https://turo.com/" target="_blank" rel="noreferrer">
+          <span>Turo trips</span>
+          <strong id="tripCount">0</strong>
+        </a>
+        <a href="https://www.e-zpassny.com/" target="_blank" rel="noreferrer">
+          <span>E-ZPass tolls</span>
+          <strong id="tollCount">0</strong>
+        </a>
+      </section>
+
+      <div class="controls">
+        <label for="graceMinutes">Trip grace period</label>
+        <select id="graceMinutes">
+          <option value="0">None</option>
+          <option value="15">15 minutes</option>
+          <option value="30">30 minutes</option>
+          <option value="60">1 hour</option>
+        </select>
+        <button id="syncButton" type="button">Sync open tabs</button>
+      </div>
+
+      <p id="status" class="status" role="status" aria-live="polite">Ready.</p>
+
+      <section>
+        <div class="section-heading">
+          <h2>Match suggestions</h2>
+          <span id="matchedCount" class="count">0</span>
+        </div>
+        <div id="matchedList" class="results empty">No matches yet.</div>
+      </section>
+
+      <section>
+        <div class="section-heading">
+          <h2>Needs review</h2>
+          <span id="unmatchedCount" class="count warning">0</span>
+        </div>
+        <div id="unmatchedList" class="results empty">No unmatched tolls.</div>
+      </section>
+
+      <details class="mapping-panel">
+        <summary>Vehicle mappings</summary>
+        <p>Map E-ZPass tags or plates to exact Turo vehicle IDs. Plate keys must match the captured value, including state when present.</p>
+        <label for="vehicleMappings">JSON: tags and plates</label>
+        <textarea id="vehicleMappings" rows="5" spellcheck="false" placeholder='{"tags":{"0123456789":"12345"},"plates":{}}'></textarea>
+        <button id="saveMappings" type="button">Save mappings</button>
+      </details>
+
+      <footer>
+        <span id="lastSync">Never synced</span>
+        <button id="clearButton" class="text-button" type="button">Clear local data</button>
+      </footer>
+    </main>
+    <script src="popup.js" type="module"></script>
+  </body>
+</html>
