@@ -1,0 +1,57 @@
+# Troubleshooting
+
+[Documentation index](README.md)
+
+## First checks
+
+1. Confirm you loaded the directory containing `manifest.json`, not the repository root.
+2. Reload the extension and both portal tabs after a source update.
+3. Keep exactly one matching tab for each source open and signed in.
+4. Open host trips and transaction activity, not only account landing pages.
+5. Load the intended date range/pages before syncing.
+6. Read the status and last-sync timestamp. Failed refreshes deliberately show prior results.
+
+## Symptoms and remedies
+
+| Message or symptom | Explanation and next step |
+| --- | --- |
+| Open a signed-in portal tab | No tab matched that source's permitted origins. Open the canonical portal and navigate to its data page. |
+| Keep exactly one portal tab open | Multiple matching tabs were found. Close duplicates, including other pages on the same permitted origin. |
+| No supported records captured | Collector returned no usable records. Let E-ZPass activity load, then retry. If data is visible, the adapter may not recognize its schema. |
+| Timed out after 20 seconds waiting for complete Turo trips | No supported trip contained a vehicle ID and both time fields during the wait. Check login, host page, data range, and selectors. |
+| Portal tab timed out | No reply arrived before the worker deadline. Keep the tab open; reload extension and tab, then retry. |
+| Receiving end does not exist / connection error | Content script may not be installed in an old tab, or the page navigated. Reload that tab after loading the extension. |
+| Portal navigated away | Pending collection was canceled. Wait on the intended page and sync again. |
+| Not refreshed; displaying prior results | At least one source failed. Neither new source snapshot was committed. Resolve the named source error. |
+| Invalid/ambiguous timestamp | Check the original format, date-only rows, and DST hour. Do not substitute posting date or invent an offset. |
+| No trip in range | Check missing history, time zone, grace, and exact vehicle mapping. Time overlap alone does not establish identity. |
+| Capture limit reached | Narrow the date range, clear captures, reload, and compare counts again. |
+| Conflicting duplicate IDs | Worker saw the same identifier with different content. Clear/reload and verify stable IDs in the adapter. |
+| Mappings conflict | Tag and plate resolve to different vehicles. Correct mappings and consider historical tag transfers. |
+| Storage quota or persistence error | Do not assume the sync saved. Narrow the range and consider clearing existing data after preserving anything needed. |
+
+A genuine empty trip/activity range currently cannot be committed as a successful two-source sync: nonempty records are required. Do not interpret this safeguard as proof of scraper failure.
+
+## Why the SPA fix may not solve every empty result
+
+The original collector observed mutations but answered `COLLECT_NOW` immediately. It now keeps the response channel open, waits on DOM/network updates, and uses a 300 ms stable-record window. The worker allows 25 seconds.
+
+Waiting cannot create unavailable fields. A visible skeleton is not a trip record; a vehicle display name is not a Turo vehicle ID. Unsupported natural-language timestamps, changed private JSON keys, generic GraphQL endpoints outside the URL filter, and unrecognized DOM containers still need adapter work.
+
+Network records take precedence over DOM records. Stale partial network capture may therefore produce surprising counts. Clear captures and reload before a new account/range workflow. The extension does not verify completeness or load missing pages.
+
+## Local debugging
+
+On `chrome://extensions`, inspect extension errors and open the service-worker inspector. Inspect the portal DOM locally to locate card boundaries, stable IDs, and full timestamp fields. Inspect the popup to diagnose rendering errors.
+
+Separate the problem into: tab detection -> script presence -> raw capture -> adapter fields -> async reply -> normalization -> matching. Do not log or share complete response payloads to shortcut that process.
+
+The worker's persisted state can contain private travel data. Avoid screenshots or console dumps of whole state objects in public reports.
+
+## Useful issue report
+
+Include extension version/commit, Chrome version, operating system, redacted page path (no query tokens), source, exact error text, reload steps, whether cards are visible, and expected versus actual record counts.
+
+Attach synthetic or thoroughly redacted data only. For timing bugs, include whether records arrive by DOM mutation, attribute hydration, or delayed network response. For matching bugs, include synthetic timestamps with explicit offsets and consistent fake vehicle IDs.
+
+For implementation changes, follow the [development guide](DEVELOPMENT.md).
