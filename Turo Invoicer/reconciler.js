@@ -179,7 +179,7 @@ export function normalizeToll(toll, timeZone = DEFAULT_TIME_ZONE) {
   const plaza = String(toll.plaza ?? toll.location ?? "Unknown plaza").trim();
   const amount = normalizeAmount(toll.amount);
   return {
-    id: toll.id || stableKey("toll", [timestampMs, plaza, amount, toll.tagId]),
+    id: toll.id || stableKey("toll", [timestampMs, plaza, amount, toll.tagId, toll.plate, toll.tagOrPlate]),
     timestamp,
     timestampMs,
     plaza,
@@ -187,6 +187,7 @@ export function normalizeToll(toll, timeZone = DEFAULT_TIME_ZONE) {
     amountCents: amount == null ? null : Math.round(amount * 100),
     tagId: toll.tagId ? String(toll.tagId) : null,
     plate: toll.plate ? String(toll.plate) : null,
+    tagOrPlate: toll.tagOrPlate ? String(toll.tagOrPlate) : null,
     vehicleId: toll.vehicleId ? String(toll.vehicleId) : null
   };
 }
@@ -206,6 +207,21 @@ export function normalizeTrip(trip, timeZone = DEFAULT_TIME_ZONE) {
     startMs,
     endMs
   };
+}
+
+/** History collection may prefetch upcoming records; reject them independently
+ * of page labels. Keep invalid intervals out too, rather than guessing dates. */
+export function selectCompletedTrips(trips, { timeZone = DEFAULT_TIME_ZONE, nowMs = Date.now() } = {}) {
+  if (!Number.isFinite(nowMs)) throw new TypeError("nowMs must be finite.");
+  const completed = [];
+  let excludedCount = 0;
+  for (const trip of trips) {
+    const { startMs, endMs, vehicleId } = normalizeTrip(trip, timeZone);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs > endMs ||
+        endMs > nowMs || vehicleId === "Unknown vehicle") excludedCount += 1;
+    else completed.push(trip);
+  }
+  return { completed, excludedCount };
 }
 
 /**
@@ -246,7 +262,9 @@ export function reconcileTolls(tolls = [], trips = [], options = {}) {
 
     const identities = [toll.vehicleId,
       toll.tagId && Object.hasOwn(vehicleByTag, toll.tagId) && vehicleByTag[toll.tagId],
-      toll.plate && Object.hasOwn(vehicleByPlate, toll.plate) && vehicleByPlate[toll.plate]
+      toll.plate && Object.hasOwn(vehicleByPlate, toll.plate) && vehicleByPlate[toll.plate],
+      toll.tagOrPlate && Object.hasOwn(vehicleByTag, toll.tagOrPlate) && vehicleByTag[toll.tagOrPlate],
+      toll.tagOrPlate && Object.hasOwn(vehicleByPlate, toll.tagOrPlate) && vehicleByPlate[toll.tagOrPlate]
     ].filter(Boolean).map(String);
     if (new Set(identities).size > 1) {
       unmatchedTolls.push({ toll, reason: "conflicting_vehicle_mapping" });

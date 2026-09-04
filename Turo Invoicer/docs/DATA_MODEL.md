@@ -14,11 +14,12 @@ Examples are synthetic. A source adapter must translate its verified schema into
   "amount": "15.00",
   "tagId": "0012345678",
   "plate": "NY:EXAMPLE",
+  "tagOrPlate": null,
   "vehicleId": null
 }
 ```
 
-Toll `amount` is USD major units, not cents. Convert a verified integer-cent API field in its adapter; do not guess units. The E-ZPass adapter deliberately emits no Turo `vehicleId`, because agency IDs use a different namespace.
+Toll `amount` is USD major units, not cents. Convert a verified integer-cent API field in its adapter; do not guess units. The E-ZPass adapter deliberately emits no Turo `vehicleId`, because agency IDs use a different namespace. Optional `tagOrPlate` preserves a mixed-column identifier without guessing its type. Explicit mappings in either namespace can resolve it; conflicts require review.
 
 ```json
 {
@@ -64,7 +65,7 @@ console.log(result.stats.matchedCount); // 1
 console.log(result.matched[0].vehicleConfirmed); // true
 ```
 
-Exports: `DEFAULT_TIME_ZONE`, `toEpochMs`, `normalizeAmount`, `normalizeToll`, `normalizeTrip`, and `reconcileTolls`. The module has no Chrome dependencies and does not mutate inputs. Direct callers should supply arrays of validated canonical records; worker validation is not automatically applied to arbitrary library calls.
+Exports: `DEFAULT_TIME_ZONE`, `toEpochMs`, `normalizeAmount`, `normalizeToll`, `normalizeTrip`, `selectCompletedTrips`, and `reconcileTolls`. The module has no Chrome dependencies and does not mutate inputs. Direct callers should supply arrays of validated canonical records; worker validation is not automatically applied to arbitrary library calls.
 
 ## Time normalization
 
@@ -76,6 +77,10 @@ Exports: `DEFAULT_TIME_ZONE`, `toEpochMs`, `normalizeAmount`, `normalizeToll`, `
 - A local time in a repeated DST hour or nonexistent spring-forward hour returns `null`; an explicit offset can disambiguate the repeated hour.
 
 The normalized toll adds `timestampMs`, numeric `amount`, and rounded `amountCents`. A normalized trip adds `startMs` and `endMs`. Missing IDs receive deterministic content-derived fallback IDs, not externally verified transaction identities.
+
+## Completed-history filter
+
+The worker first calls `selectCompletedTrips(trips, { timeZone, nowMs })`, returning `{ completed, excludedCount }`. Only valid intervals ending at or before `nowMs` qualify; the default is current time. Future, in-progress, and invalid trips are excluded. The standalone `reconcileTolls` remains general-purpose; external callers must apply this filter to adopt the history policy.
 
 ## Matching algorithm
 
@@ -115,7 +120,7 @@ Storage area: `chrome.storage.local`. Key: `turoTollReconcilerState`.
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "sources": {
     "turo": { "records": [], "updatedAt": null },
     "ezpass": { "records": [], "updatedAt": null }
@@ -131,4 +136,4 @@ Storage area: `chrome.storage.local`. Key: `turoTollReconcilerState`.
 }
 ```
 
-Successful sync replaces the records/results and sets ISO refresh timestamps. Settings updates recalculate results but retain `lastSync`. Unknown stored schema versions fall back to an empty state; no general migration framework exists. Clearing removes this key and resets settings as well as data.
+Successful sync replaces the records/results and sets ISO refresh timestamps. Settings updates recalculate results but retain `lastSync`. Version-1 snapshots are retired rather than reused for history matching; valid manual mappings and supported grace settings are retained. Unknown versions fall back to an empty state. Clearing removes this key and resets settings as well as data.

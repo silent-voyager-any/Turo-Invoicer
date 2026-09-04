@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { toEpochMs, normalizeAmount, reconcileTolls } from "../reconciler.js";
+import { toEpochMs, normalizeAmount, reconcileTolls, selectCompletedTrips } from "../reconciler.js";
 
 const trip = { id: "trip-1", vehicleId: "car-1", start: "2026-07-01 09:00", end: "2026-07-01 18:00" };
 const toll = { id: "toll-1", timestamp: "2026-07-01 12:00", plaza: "Queens Midtown", amount: "$6.94" };
@@ -68,4 +68,20 @@ test("does not mutate inputs", () => {
   const original = JSON.stringify({ toll, trip });
   reconcileTolls([toll], [trip]);
   assert.equal(JSON.stringify({ toll, trip }), original);
+});
+
+test("history excludes future, in-progress, and invalid trips using normalized timestamps", () => {
+  const nowMs = Date.parse("2026-07-01T22:00:00Z");
+  const { completed, excludedCount } = selectCompletedTrips([
+    trip, { ...trip, id: "future", start: "2026-07-02 09:00", end: "2026-07-02 18:00" },
+    { ...trip, id: "ongoing", end: "2026-07-01 19:00" }, { ...trip, id: "invalid", end: "unknown" }
+  ], { nowMs });
+  assert.deepEqual(completed.map((t) => t.id), ["trip-1"]);
+  assert.equal(excludedCount, 3);
+});
+test("mixed tag/plate identifiers resolve only through explicit, nonconflicting mappings", () => {
+  const mixed = { ...toll, tagOrPlate: "000123" };
+  assert.equal(reconcileTolls([mixed], [trip], { vehicleByTag: { "000123": "car-1" } }).matched[0].vehicleConfirmed, true);
+  assert.equal(reconcileTolls([mixed], [trip], { vehicleByPlate: { "000123": "car-1" } }).matched[0].vehicleConfirmed, true);
+  assert.equal(reconcileTolls([mixed], [trip], { vehicleByTag: { "000123": "car-1" }, vehicleByPlate: { "000123": "car-2" } }).unmatchedTolls[0].reason, "conflicting_vehicle_mapping");
 });

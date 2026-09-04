@@ -21,11 +21,11 @@
       </p>
 
       <section class="source-grid" aria-label="Data sources">
-        <a href="https://turo.com/" target="_blank" rel="noreferrer">
-          <span>Turo trips</span>
+        <a href="https://turo.com/us/en/trips/history" target="_blank" rel="noreferrer">
+          <span>Turo history</span>
           <strong id="tripCount">0</strong>
         </a>
-        <a href="https://www.e-zpassny.com/" target="_blank" rel="noreferrer">
+        <a href="https://www.e-zpassny.com/ezpass/dashboard/transactions" target="_blank" rel="noreferrer">
           <span>E-ZPass tolls</span>
           <strong id="tollCount">0</strong>
         </a>
@@ -62,10 +62,25 @@
 
       <details class="mapping-panel">
         <summary>Vehicle mappings</summary>
-        <p>Map E-ZPass tags or plates to exact Turo vehicle IDs. Plate keys must match the captured value, including state when present.</p>
+        <p>Enter the E-ZPass tag for each car manually. Turo is not assumed to provide it. The vehicle ID is the number in the Turo listing URL; choose a captured ID or enter one.</p>
+        <form id="vehicleMappingForm">
+          <label for="vehicleIdInput">Turo vehicle ID</label>
+          <input id="vehicleIdInput" list="capturedVehicles" maxlength="100" required placeholder="Example: 12345" />
+          <datalist id="capturedVehicles"></datalist>
+          <label for="tagIdInput">E-ZPass tag number</label>
+          <input id="tagIdInput" maxlength="100" placeholder="Keep leading zeros" />
+          <label for="plateInput">Plate (optional, exact captured format)</label>
+          <input id="plateInput" maxlength="100" placeholder="Example: NY:ABC1234" />
+          <button type="submit">Save vehicle mapping</button>
+        </form>
+        <div id="savedMappings" aria-live="polite"></div>
+        <p>Supply a tag or plate, or both. Plate keys must match the captured value, including state when present. Saving the same tag/plate updates its vehicle. Historical tag transfers are not supported.</p>
+        <details>
+        <summary>Advanced JSON mappings</summary>
         <label for="vehicleMappings">JSON: tags and plates</label>
         <textarea id="vehicleMappings" rows="5" spellcheck="false" placeholder='{"tags":{"0123456789":"12345"},"plates":{}}'></textarea>
         <button id="saveMappings" type="button">Save mappings</button>
+        </details>
       </details>
 
       <footer>

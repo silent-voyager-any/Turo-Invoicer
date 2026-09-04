@@ -14,7 +14,8 @@
     const entries = Object.entries(object);
     // Alias priority is deterministic, independent of JSON property order.
     for (const alias of keys) {
-      const entry = entries.find(([key, value]) => key.toLowerCase() === alias.toLowerCase() && value != null && value !== "");
+      const canonical = (key) => key.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const entry = entries.find(([key, value]) => canonical(key) === canonical(alias) && value != null && value !== "");
       if (entry) return entry[1];
     }
     return null;
@@ -39,13 +40,25 @@
   }
 
   function tableValues(row) {
-    const table = row.closest("table");
-    if (!table) return () => null;
-    const headers = [...table.querySelectorAll("thead th")].map((cell) => cell.textContent.trim().toLowerCase());
-    const cells = [...row.querySelectorAll("td")].map((cell) => cell.textContent.trim());
+    const table = row.closest('table, [role="grid"], [role="table"]');
+    const normalize = (text) => (text || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    let headerNodes = table ? [...table.querySelectorAll('thead th, [role="columnheader"]')] : [];
+    if (!headerNodes.length && table) {
+      // Legacy tables can render their header in the first tbody row.
+      headerNodes = [...(table.querySelector("tr")?.querySelectorAll("th, td") || [])];
+    }
+    const headers = headerNodes.map((cell) => normalize(cell.textContent));
+    const cells = [...row.querySelectorAll('td, [role="gridcell"], [role="cell"]')];
     return (patterns) => {
-      const index = headers.findIndex((header) => patterns.some((pattern) => pattern.test(header)));
-      return index >= 0 ? cells[index] : null;
+      for (const pattern of patterns) {
+        const index = cells.findIndex((cell, index) => {
+          const labelled = cell.getAttribute("data-label") || cell.getAttribute("data-title");
+          const column = Number(cell.getAttribute("aria-colindex")) || index + 1;
+          return pattern.test(labelled ? normalize(labelled) : headers[column - 1] || "");
+        });
+        if (index >= 0) return cells[index].querySelector?.("time[datetime]")?.getAttribute("datetime") || cells[index].textContent.trim();
+      }
+      return null;
     };
   }
 
@@ -55,16 +68,33 @@
     let timer;
     let paused = false;
     let capped = false;
+    let networkMessages = 0;
+    let domCandidates = 0;
+    const pagePath = () => new URL(location.href).pathname.replace(/\/$/, "");
+    let capturePath = pagePath();
     const pending = new Set();
     const waitTimeoutMs = Math.min(20000, Math.max(0, options.waitTimeoutMs || 0));
     const settleMs = Math.max(0, options.settleMs ?? 300);
     const records = () => [...(network.size ? network : dom).values()];
     const snapshot = () => ({
-      ok: true, source, records: records(),
+      ok: true, source, records: records(), ...(options.isPageAllowed ? { pagePath: capturePath } : {}),
       warning: capped ? "Capture limit reached; narrow the portal date range and reload." :
         "Only loaded records are included; pagination and completeness are not verified."
     });
     const notify = () => { for (const check of [...pending]) check(); };
+    function checkPage() {
+      const path = pagePath();
+      if (options.isPageAllowed && (path !== capturePath || !options.isPageAllowed(path))) {
+        network.clear();
+        dom.clear();
+        capped = false;
+        networkMessages = 0;
+        domCandidates = 0;
+        for (const check of [...pending]) check.cancel(options.pageMessage || "Portal left the supported data page. Return and sync again.");
+      }
+      capturePath = path;
+      return !options.isPageAllowed || options.isPageAllowed(path);
+    }
 
     // Use the existing shared MutationObserver to wake pending collections.
     // Keep each Chrome reply channel open until complete records have settled,
@@ -82,6 +112,7 @@
         reply(result);
       };
       const check = () => {
+        if (!checkPage()) return;
         const current = records();
         const signature = current.length ? JSON.stringify(current) : null;
         if (signature === lastSignature) return;
@@ -96,7 +127,8 @@
         extractDom();
         finish(records().length ? snapshot() : {
           ok: false, source,
-          error: options.emptyMessage || "Timed out waiting for supported portal records."
+          error: (options.emptyMessage || "Timed out waiting for supported portal records.") +
+            ` Diagnostics: ${domCandidates} DOM row/card candidates, ${networkMessages} supported-path JSON responses observed; neither yielded complete records.`
         });
       }, waitTimeoutMs);
       pending.add(check);
@@ -127,9 +159,10 @@
     }
 
     function extractDom() {
-      if (paused) return;
+      if (paused || !checkPage()) return;
       const next = new Map();
-      try { readDom((candidate) => put(next, parseRecord(candidate))); }
+      domCandidates = 0;
+      try { readDom((candidate) => { domCandidates += 1; put(next, parseRecord(candidate)); }); }
       catch { /* A selector failure must not break the host page. */ }
       dom = next;
       notify();
@@ -138,6 +171,8 @@
     window.addEventListener("message", (event) => {
       if (paused || event.source !== window || event.origin !== location.origin ||
           event.data?.source !== MESSAGE_SOURCE || event.data?.type !== "NETWORK_RESPONSE") return;
+      if (!checkPage() || (options.isPageAllowed && event.data.pagePath !== capturePath)) return;
+      networkMessages += 1;
       // MAIN-world messages can be forged by the host page. They carry data only,
       // never commands, URLs to fetch, or privileged extension actions.
       try { scan(event.data.payload); } catch { /* Invalid schema: use DOM fallback. */ }
@@ -153,9 +188,15 @@
         network.clear();
         dom.clear();
         capped = false;
+        networkMessages = 0;
+        domCandidates = 0;
         for (const check of [...pending]) check.cancel("Capture cleared while waiting for portal data.");
         reply({ ok: true });
       } else if (message?.type === "COLLECT_NOW") {
+        if (!checkPage()) {
+          reply({ ok: false, source, error: options.pageMessage || "Open the supported data page and sync again." });
+          return false;
+        }
         paused = false;
         extractDom();
         if (waitTimeoutMs) {
@@ -181,13 +222,15 @@
       attributeFilter: ["datetime", "href", "class", "data-testid", "data-test", "data-field",
         "data-trip-id", "data-reservation-id", "data-vehicle-id", "data-listing-id", "data-status",
         "data-start", "data-end", "data-start-time", "data-end-time", "data-start-date-time",
-        "data-end-date-time", "aria-busy"]
+        "data-end-date-time", "aria-busy", "data-label", "data-title", "aria-colindex",
+        "data-amount", "data-timestamp", "data-transaction-date", "data-transaction-time", "data-plaza"]
     };
     observer.observe(document, observerOptions);
     window.addEventListener("pagehide", () => {
       clearTimeout(timer);
       timer = null;
       observer.disconnect();
+      if (options.isPageAllowed) { network.clear(); dom.clear(); }
       for (const check of [...pending]) check.cancel("Portal navigated away while waiting for data. Try sync again.");
     });
     window.addEventListener("pageshow", () => {

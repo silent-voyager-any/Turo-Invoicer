@@ -1,50 +1,80 @@
 (() => {
   "use strict";
   const { scalar, pick, timestamp, textOf, tableValues, createCapture } = TollCapture;
+  const TRANSACTIONS_PATH = "/ezpass/dashboard/transactions";
 
   function parseToll(value) {
-    // Use passage/transaction time, NEVER posting date (posting can be days later).
+    const type = scalar(pick(value, ["transactionType", "activityType", "type"]));
+    if (type && /payment|replenish|deposit|balance/i.test(String(type))) return null;
+    // Exit/passage/transaction time is usable; posting dates are not.
     const time = timestamp(value,
-      ["timestamp", "transactionDateTime", "transactionTimestamp", "tollTimestamp", "dateTime"],
-      ["transactionDate", "txnDate", "tollDate"], ["transactionTime", "txnTime", "tollTime"]) ??
+      ["timestamp", "transactionDateTime", "transactionTimestamp", "txnDateTime",
+        "tollDateTime", "tollTimestamp", "exitDateTime", "passageDateTime", "dateTime"],
+      ["transactionDate", "txnDate", "tollDate", "exitDate", "passageDate"],
+      ["transactionTime", "txnTime", "tollTime", "exitTime", "passageTime"]) ??
       scalar(pick(value, ["transactionTime", "tollTime"]));
-    const plaza = scalar(pick(value, ["plaza", "plazaName", "plazaLocation", "tollPlaza", "facilityName", "location"]));
-    const amount = scalar(pick(value, ["tollAmount", "transactionAmount", "amount", "charge", "fare"]));
+    const plazaValue = pick(value, ["exitPlazaName", "exitPlaza", "plaza", "plazaName",
+      "plazaLocation", "tollPlaza", "facilityName", "facility", "location", "entryPlaza"]);
+    const plaza = scalar(plazaValue) ?? scalar(pick(plazaValue, ["name", "description", "code"]));
+    const amount = scalar(pick(value, ["tollAmount", "transactionAmount", "amount", "chargeAmount", "charge", "fare"]));
     if (time == null || plaza == null || amount == null) return null;
     return {
-      id: scalar(pick(value, ["transactionId", "txnId", "id"])),
+      id: scalar(pick(value, ["transactionId", "txnId", "transactionNumber", "referenceNumber", "id"])),
       timestamp: time, plaza: String(plaza), amount,
       tagId: scalar(pick(value, ["tagId", "tagNumber", "transponderId", "transponderNumber"])),
       plate: scalar(pick(value, ["licensePlate", "plateNumber", "plate"])),
-      // E-ZPass vehicle IDs are a different namespace from Turo IDs. Resolve
-      // identity only through an explicit tag/plate mapping in the popup.
-      vehicleId: null
+      tagOrPlate: scalar(pick(value, ["tagOrPlate", "tagPlateNumber", "tagPlate"])),
+      vehicleId: null // An E-ZPass vehicle ID is not a Turo vehicle ID.
     };
   }
 
   function readDom(add) {
-    const rows = document.querySelectorAll(
-      '[data-transaction-id], [data-testid*="transaction-row" i], [data-test*="transaction-row" i], table tbody tr'
-    );
+    if (new URL(location.href).pathname.replace(/\/$/, "") !== TRANSACTIONS_PATH) return;
+    const rows = new Set(document.querySelectorAll(
+      '[data-transaction-id], [data-testid*="transaction-row" i], [data-test*="transaction-row" i], ' +
+      'table tr, [role="grid"] [role="row"], [role="table"] [role="row"]'
+    ));
     for (const row of rows) {
       const cell = tableValues(row);
-      const date = cell([/^transaction date$/, /^toll date$/, /^date$/]);
-      const time = cell([/^transaction time$/, /^toll time$/, /^time$/]);
+      // Header matching is punctuation/whitespace insensitive, and is scoped
+      // to this table/grid. Exit timestamps and plazas win over entry values.
+      const date = cell([/^exit date$/, /^transaction date$/, /^txn date$/, /^toll date$/, /^date$/]);
+      const time = cell([/^exit time$/, /^transaction time$/, /^txn time$/, /^toll time$/, /^time$/]);
+      const explicitDateTime = cell([
+        /^exit date (?:and )?time$/, /^transaction date (?:and )?time$/,
+        /^txn date (?:and )?time$/, /^toll date (?:and )?time$/, /^date (?:and )?time$/
+      ]);
+      const tagged = cell([/^tag plate(?: number| no)?$/]);
+      const type = cell([/^transaction type$/, /^activity type$/, /^type$/]);
       add({
-        transactionId: row.dataset.transactionId || cell([/^transaction id$/, /^reference$/]),
-        timestamp: row.dataset.timestamp || row.querySelector("time[datetime]")?.dateTime ||
-          cell([/^transaction date\/time$/, /^date\/time$/]) ||
-          (date && time ? date + " " + time : date) ||
+        transactionId: row.dataset.transactionId || cell([/^transaction (?:id|number|no)$/, /^reference(?: number)?$/]),
+        timestamp: row.dataset.timestamp || explicitDateTime ||
+          (date && /\d{1,2}:\d{2}/.test(date) ? date : date && time ? date + " " + time : null) ||
           textOf(row, ['[data-field="transactionDateTime"]', '[data-testid="transaction-date-time"]']),
-        plaza: row.dataset.plaza || cell([/plaza/, /facility/, /^location$/]) ||
-          textOf(row, ['[data-field="plaza"]', '[data-testid="plaza"]']),
-        amount: row.dataset.amount ?? cell([/^amount$/, /^toll amount$/, /^charge$/, /^fare$/]) ??
+        transactionDate: row.dataset.transactionDate || date,
+        transactionTime: row.dataset.transactionTime || time,
+        plaza: row.dataset.plaza || cell([
+          /^exit plaza(?: name)?$/, /^plaza(?: name| location)?$/, /^toll plaza$/,
+          /^facility(?: name)?$/, /^location$/, /^entry plaza(?: name)?$/, /^transaction description$/, /^description$/
+        ]) || textOf(row, ['[data-field="plaza"]', '[data-testid="plaza"]']),
+        amount: row.dataset.amount ?? cell([/^toll amount$/, /^transaction amount$/, /^amount$/, /^toll$/, /^charge(?: amount)?$/, /^fare$/]) ??
           textOf(row, ['[data-field="amount"]', '[data-testid="amount"]']),
-        tagId: row.dataset.tagId || cell([/^tag(?: number| id)?$/, /^transponder/]),
-        plate: row.dataset.plate || cell([/^license plate$/, /^plate(?: number)?$/])
+        tagId: row.dataset.tagId || cell([/^tag(?: number| id| no)?$/, /^transponder(?: number| id| no)?$/]),
+        // Even a numeric plate can resemble a tag. Preserve the mixed value and
+        // resolve only via an explicit user mapping, without guessing its type.
+        tagOrPlate: tagged,
+        plate: row.dataset.plate || cell([/^license plate(?: number)?$/, /^plate(?: number| no)?$/]),
+        transactionType: type
       });
     }
   }
 
-  createCapture("ezpass", parseToll, readDom);
+  createCapture("ezpass", parseToll, readDom, {
+    isPageAllowed: (path) => path === TRANSACTIONS_PATH,
+    pageMessage: "Open https://www.e-zpassny.com/ezpass/dashboard/transactions and apply your activity filters before syncing.",
+    waitTimeoutMs: 20000,
+    settleMs: 300,
+    observeThrottleMs: 100,
+    emptyMessage: "Timed out after 20 seconds waiting for E-ZPass transactions. Open transaction activity and apply a date range. If rows are visible, report only the page path and column headings (no account data) so unsupported fields can be mapped."
+  });
 })();

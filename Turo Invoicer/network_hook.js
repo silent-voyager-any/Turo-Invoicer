@@ -10,9 +10,14 @@
   const MAX_RESPONSE_CHARS = 2_000_000;
   const relevantPath = /(?:trip|reservation|booking|calendar|transaction|toll|activity|statement)/i;
   const excludedPath = /(?:login|logout|auth|password|token|payment|profile)/i;
+  const isTuro = location.hostname === "turo.com";
+  const HISTORY_PATH = "/us/en/trips/history";
+  const TARGET_PATH = isTuro ? HISTORY_PATH : "/ezpass/dashboard/transactions";
+  const pagePath = () => new URL(location.href).pathname.replace(/\/$/, "");
 
-  function isAllowedUrl(rawUrl) {
+  function isAllowedUrl(rawUrl, startedOn = pagePath()) {
     try {
+      if (startedOn !== TARGET_PATH || pagePath() !== TARGET_PATH) return false;
       const url = new URL(rawUrl, location.href);
       const domain = location.hostname.endsWith("turo.com") ? "turo.com" : "e-zpassny.com";
       const sameSite = url.hostname === domain || url.hostname.endsWith("." + domain);
@@ -23,14 +28,16 @@
     }
   }
 
-  function publish(url, payload) {
+  function publish(startedOn, payload) {
     if (payload == null) return;
+    if (startedOn !== TARGET_PATH || pagePath() !== TARGET_PATH) return;
     // No request URL/query string crosses the bridge (it may contain tokens).
     if (JSON.stringify(payload).length > MAX_RESPONSE_CHARS) return;
     window.postMessage(
       {
         source: MESSAGE_SOURCE,
         type: "NETWORK_RESPONSE",
+        pagePath: TARGET_PATH,
         payload
       },
       location.origin
@@ -67,14 +74,15 @@
     } finally { reader.releaseLock(); }
   }
   window.fetch = async function interceptedFetch(...args) {
+    const startedOn = pagePath();
     const response = await originalFetch.apply(this, args);
     const requestUrl = response.url || args[0]?.url || args[0];
-    if (response.ok && isAllowedUrl(requestUrl)) {
+    if (response.ok && isAllowedUrl(requestUrl, startedOn)) {
       try {
         const contentLength = Number(response.headers.get("content-length") || 0);
         const contentType = response.headers.get("content-type") || "";
         if ((!contentLength || contentLength <= MAX_RESPONSE_CHARS) && /json|text\/plain/i.test(contentType)) {
-          readBounded(response.clone()).then((payload) => publish(requestUrl, payload)).catch(() => {});
+          readBounded(response.clone()).then((payload) => publish(startedOn, payload)).catch(() => {});
         }
       } catch {
         // Opaque/streamed responses may not be cloneable; DOM extraction remains available.
@@ -92,20 +100,21 @@
         "load",
         () => {
           try {
-            const requestUrl = this.responseURL || requests.get(this);
-            if (!isAllowedUrl(requestUrl) || this.status < 200 || this.status >= 300) return;
+            const request = requests.get(this);
+            const requestUrl = this.responseURL || request.url;
+            if (!isAllowedUrl(requestUrl, request.pagePath) || this.status < 200 || this.status >= 300) return;
             const payload =
               this.responseType === "json"
                 ? this.response
                 : parseJsonText(this.responseText);
-            publish(requestUrl, payload);
+            publish(request.pagePath, payload);
           } catch {
             // Access to some response types throws; ignore and rely on the DOM.
           }
         }
       );
     }
-    requests.set(this, String(url));
+    requests.set(this, { url: String(url), pagePath: pagePath() });
     return result;
   };
 })();

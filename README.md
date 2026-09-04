@@ -4,18 +4,24 @@ A local-first Chrome extension that helps Turo hosts reconcile NY E-ZPass toll a
 
 The extension observes data loaded in your signed-in browser tabs, matches toll timestamps to trip intervals, and presents suggestions for review. It does not require a server, store portal passwords, or submit reimbursement claims.
 
-> **Status: development scaffold, version 0.1.0.** Automated tests cover matching, extraction adapters, messaging, and SPA waiting. Authenticated production portal schemas and end-to-end operation still require validation. Do not treat suggestions as verified billing evidence.
+> **Status: development scaffold, version 0.2.0.** Automated tests cover matching, extraction adapters, messaging, and SPA waiting. Authenticated production portal schemas and end-to-end operation still require validation. Do not treat suggestions as verified billing evidence.
 
 ## Features
 
 - Manifest V3 service worker with narrowly scoped HTTPS host permissions.
 - Local fetch/XHR response observation and defensive DOM fallbacks.
-- Turo SPA collection waits up to 20 seconds for usable records.
+- History-only Turo collection excludes upcoming and in-progress trips.
+- Both portal collectors wait up to 20 seconds for usable records.
+- E-ZPass table/grid fallbacks and manual per-vehicle tag entry.
 - America/New_York time normalization, including daylight-saving ambiguity detection.
 - Inclusive trip-window matching with optional grace periods.
 - Tag/plate-to-Turo-vehicle mappings and explicit overlap/conflict review.
 - Local snapshots, atomic two-source sync, and a clear-data control.
 - No backend uploads, analytics, remote scripts, or automatic claim submission.
+
+## Version 0.2.0 update
+
+Sync now reads only `https://turo.com/us/en/trips/history` and `https://www.e-zpassny.com/ezpass/dashboard/transactions`. Use the E-ZPass portal's date, plate, and tag filters yourself. The popup provides manual vehicle-ID/tag/plate entry; Turo is not assumed to expose transponder numbers. Old pre-history snapshots are retired while valid vehicle mappings are retained. Reload the extension and both tabs after updating.
 
 ## Quick start
 
@@ -23,7 +29,7 @@ The extension observes data loaded in your signed-in browser tabs, matches toll 
 2. Open `chrome://extensions` in Chrome 111 or newer.
 3. Enable **Developer mode**, select **Load unpacked**, and choose the **`Turo Invoicer` subfolder** containing `manifest.json`—not the repository root.
 4. Keep exactly one Turo tab and one NY E-ZPass tab open. Sign in through the portals normally.
-5. Reload both portal tabs after installing or updating the extension. Open Turo's host trips page and E-ZPass transaction activity.
+5. Reload both portal tabs after installing or updating the extension. Open Turo's trip-history page and the E-ZPass dashboard transactions page.
 6. Load the required date ranges/pages, open the extension, and select **Sync open tabs**.
 7. Review suggestions, configure vehicle mappings, and manually verify timestamps, amounts, identity, and source completeness before any billing action.
 
@@ -41,7 +47,7 @@ npm test
 npm run check
 ```
 
-The current suite contains 35 tests. Checks cover manifest references, the intended permissions, and JavaScript syntax. Tests use synthetic data and mocked Chrome/DOM interfaces; they are not authenticated browser tests.
+The current suite contains 55 tests. Checks cover manifest references, the intended permissions, and JavaScript syntax. Tests use synthetic data and mocked Chrome/DOM interfaces; they are not authenticated browser tests.
 
 ## Documentation
 

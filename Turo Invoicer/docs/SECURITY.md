@@ -17,7 +17,7 @@ It observes response bodies and DOM content on permitted pages. Endpoint filteri
 | `https://www.e-zpassny.com/*` | Inject collectors and query/message the NY portal tab |
 | `https://e-zpassny.com/*` | Support the portal's apex hostname |
 
-No `cookies`, `webRequest`, `tabs`, `scripting`, `activeTab`, `offscreen`, `declarativeNetRequest`, `unlimitedStorage`, or all-sites permission is declared. Static script injection and matching tab access use the declared host permissions. The page observer can see same-domain-family API responses made by the page without issuing its own API requests.
+No `cookies`, `webRequest`, `tabs`, `scripting`, `activeTab`, `offscreen`, `declarativeNetRequest`, `unlimitedStorage`, or all-sites permission is declared. Static script injection and matching tab access use the declared host permissions. The page observer can see same-domain-family API responses made by the page without issuing its own API requests. Body capture is restricted to the exact history and transactions page paths; origin-wide startup registration supports SPA navigation.
 
 ## Trust boundaries
 
@@ -31,7 +31,7 @@ Identity/permission checks reduce exposure; they do not prove that portal record
 
 ## Data lifecycle
 
-Tab memory contains captured toll/trip fields. Network records can accumulate until clear or reload. A successful explicit sync persists normalized records, derived suggestions, settings, and refresh timestamps. Tags, plates, travel times, and vehicle IDs should be treated as personal information.
+Tab memory contains captured toll/trip fields. Network records can accumulate while the supported route remains open, including across filter changes. Leaving the route clears captures. Clear/reload before beginning a new filter workflow. A successful explicit sync persists normalized records, derived suggestions, settings, and refresh timestamps. Tags, plates, travel times, and vehicle IDs should be treated as personal information.
 
 The code has no telemetry, analytics service, backend upload, cloud-sync storage, or remote executable dependencies. It does not implement application-level encryption, automatic expiry, account binding, or secure erasure of disk remnants. Protect the OS and Chrome profile and clear data when no longer needed.
 

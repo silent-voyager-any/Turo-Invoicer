@@ -6,9 +6,9 @@ This directory is the runnable Chrome Manifest V3 extension. Select this folder,
 
 1. Use Chrome 111+ and enable Developer mode at `chrome://extensions`.
 2. Load this directory, then reload your signed-in portal tabs.
-3. Keep one Turo tab and one E-ZPass NY tab open. Load host trips and toll activity for the intended range.
-4. Select **Sync open tabs** in the popup. Turo collection can take up to 20 seconds.
-5. Review suggestions and configure exact tag/plate-to-vehicle mappings before relying on a result.
+3. Keep one Turo tab and one E-ZPass NY tab open. Open `/us/en/trips/history` and `/ezpass/dashboard/transactions`, then apply the intended activity filters.
+4. Select **Sync open tabs** in the popup. Both collectors can take up to 20 seconds. Only completed Turo trips qualify.
+5. Review suggestions and use the manual vehicle-ID/tag/plate form before relying on a result.
 
 No package installation or build is needed. Development checks, from this directory:
 

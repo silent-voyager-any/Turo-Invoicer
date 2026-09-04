@@ -1,12 +1,27 @@
-import { DEFAULT_TIME_ZONE, reconcileTolls } from "./reconciler.js";
+import { DEFAULT_TIME_ZONE, reconcileTolls, selectCompletedTrips } from "./reconciler.js";
 
 const STORAGE_KEY = "turoTollReconcilerState";
 const PATTERNS = { turo: ["https://turo.com/*"], ezpass: ["https://www.e-zpassny.com/*", "https://e-zpassny.com/*"] };
 const MAX_RECORDS = 5000;
+const HISTORY_PATH = "/us/en/trips/history";
+const TRANSACTIONS_PATH = "/ezpass/dashboard/transactions";
+const isTransactionsUrl = (url) => {
+  try {
+    const parsed = new URL(url);
+    return ["https://www.e-zpassny.com", "https://e-zpassny.com"].includes(parsed.origin) &&
+      parsed.pathname.replace(/\/$/, "") === TRANSACTIONS_PATH;
+  } catch { return false; }
+};
+const isHistoryUrl = (url) => {
+  try {
+    const parsed = new URL(url);
+    return parsed.origin === "https://turo.com" && parsed.pathname.replace(/\/$/, "") === HISTORY_PATH;
+  } catch { return false; }
+};
 let operations = Promise.resolve();
 
 const emptyState = () => ({
-  version: 1,
+  version: 2,
   sources: {
     turo: { records: [], updatedAt: null },
     ezpass: { records: [], updatedAt: null }
@@ -23,7 +38,20 @@ const storageReady = chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED
 async function getState() {
   await storageReady;
   const stored = (await chrome.storage.local.get(STORAGE_KEY))[STORAGE_KEY];
-  return stored?.version === 1 ? stored : emptyState();
+  if (stored?.version === 2) return stored;
+  const fresh = emptyState();
+  if (stored?.version === 1) {
+    // Retire pre-history snapshots, but preserve valid user vehicle mappings.
+    try {
+      fresh.settings = {
+        ...fresh.settings,
+        vehicleByTag: cleanMapping(stored.settings?.vehicleByTag || {}),
+        vehicleByPlate: cleanMapping(stored.settings?.vehicleByPlate || {}),
+        graceMinutes: [0, 15, 30, 60].includes(stored.settings?.graceMinutes) ? stored.settings.graceMinutes : 0
+      };
+    } catch { /* Invalid legacy settings fall back to defaults. */ }
+  }
+  return fresh;
 }
 
 async function save(state) {
@@ -33,8 +61,9 @@ async function save(state) {
 }
 
 function reconcile(state) {
+  const { completed } = selectCompletedTrips(state.sources.turo.records, { timeZone: state.settings.timeZone });
   state.reconciliation = reconcileTolls(
-    state.sources.ezpass.records, state.sources.turo.records, state.settings
+    state.sources.ezpass.records, completed, state.settings
   );
   return state;
 }
@@ -49,7 +78,7 @@ function sanitizeRecords(source, raw) {
   if (!Array.isArray(raw) || raw.length > MAX_RECORDS) throw new Error("Invalid record batch.");
   const fields = source === "turo"
     ? ["id", "vehicleId", "start", "end"]
-    : ["id", "timestamp", "plaza", "amount", "tagId", "plate", "vehicleId"];
+    : ["id", "timestamp", "plaza", "amount", "tagId", "plate", "tagOrPlate", "vehicleId"];
   const records = new Map();
   for (const candidate of raw) {
     if (!candidate || typeof candidate !== "object") continue;
@@ -79,22 +108,39 @@ async function tabRequest(tabId, message, timeoutMs = 5000) {
 }
 
 async function collect(source) {
-  const tabs = await chrome.tabs.query({ url: PATTERNS[source] });
+  let tabs = await chrome.tabs.query({ url: PATTERNS[source] });
+  if (source === "turo") tabs = tabs.filter((tab) => isHistoryUrl(tab.url));
+  else tabs = tabs.filter((tab) => isTransactionsUrl(tab.url));
   // Avoid silently combining different accounts across tabs.
   if (tabs.length !== 1) {
     return {
       source, ok: false,
-      error: tabs.length ? "Keep exactly one " + source + " portal tab open." : "Open a signed-in " + source + " portal tab."
+      error: source === "turo" ? (tabs.length ? "Keep exactly one Turo trip-history tab open." :
+        "Open https://turo.com/us/en/trips/history. Other Turo pages are not collected.") :
+        (tabs.length ? "Keep exactly one E-ZPass transactions tab open." : "Open https://www.e-zpassny.com/ezpass/dashboard/transactions and apply your filters.")
     };
   }
   try {
-    // Turo waits up to 20 seconds for SPA hydration plus a short settle window.
-    // Give its async response a transport margin; other operations stay short.
-    const response = await tabRequest(tabs[0].id, { type: "COLLECT_NOW" }, source === "turo" ? 25000 : 5000);
+    // Both portals can hydrate asynchronously: 20s content deadline + margin.
+    const response = await tabRequest(tabs[0].id, { type: "COLLECT_NOW" }, 25000);
     if (response?.source !== source || !response.ok) throw new Error(response?.error || "Unexpected portal response.");
-    const records = sanitizeRecords(source, response.records);
+    if (source === "turo" && response.pagePath !== HISTORY_PATH) throw new Error("Reload the extension and Turo history tab; the history-only collector is not active.");
+    if (source === "ezpass" && response.pagePath !== TRANSACTIONS_PATH) throw new Error("Reload the extension and E-ZPass transactions tab; the transactions collector is not active.");
+    const current = (await chrome.tabs.query({ url: PATTERNS[source] })).find((tab) => tab.id === tabs[0].id);
+    if (!(source === "turo" ? isHistoryUrl(current?.url) : isTransactionsUrl(current?.url))) {
+      throw new Error("Portal left the supported data page during sync. Return and retry.");
+    }
+    let records = sanitizeRecords(source, response.records);
     if (!records.length) throw new Error("No supported records captured. Open the data page and reload it.");
-    return { source, ok: true, records, warning: response.warning || null };
+    let warning = response.warning || null;
+    if (source === "turo") {
+      const state = await getState();
+      const filtered = selectCompletedTrips(records, { timeZone: state.settings.timeZone });
+      records = filtered.completed;
+      if (filtered.excludedCount) warning = [warning, `${filtered.excludedCount} upcoming, in-progress, or invalid trips excluded.`].filter(Boolean).join(" ");
+      if (!records.length) throw new Error("No completed trips with valid full timestamps were found in history. Future and in-progress trips are excluded.");
+    }
+    return { source, ok: true, records, warning };
   } catch (error) {
     return { source, ok: false, error: error.message || "Reload the portal tab after installation." };
   }

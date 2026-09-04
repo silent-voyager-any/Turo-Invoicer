@@ -130,5 +130,8 @@ footer { margin-top: 17px; color: #78837d; font-size: 10px; }
 .mapping-panel p { margin: 8px 0; color: #65716b; line-height: 1.4; }
 .mapping-panel label { display: block; margin: 8px 0 4px; }
 .mapping-panel textarea { width: 100%; resize: vertical; border: 1px solid #ccd7d0; border-radius: 8px; padding: 8px; font: 11px ui-monospace, monospace; }
+.mapping-panel input { width: 100%; padding: 8px; border: 1px solid #ccd7d0; border-radius: 8px; font: inherit; }
+#savedMappings { margin-top: 10px; max-height: 120px; overflow-y: auto; overflow-wrap: anywhere; }
+#savedMappings p { margin: 4px 0; }
 .mapping-panel button { margin-top: 6px; padding: 0 12px; font-size: 11px; cursor: pointer; }
 :focus-visible { outline: 2px solid #176b4b; outline-offset: 2px; }

@@ -14,6 +14,12 @@ const elements = {
 };
 elements.vehicleMappings = document.querySelector("#vehicleMappings");
 elements.saveMappings = document.querySelector("#saveMappings");
+elements.vehicleMappingForm = document.querySelector("#vehicleMappingForm");
+elements.vehicleIdInput = document.querySelector("#vehicleIdInput");
+elements.tagIdInput = document.querySelector("#tagIdInput");
+elements.plateInput = document.querySelector("#plateInput");
+elements.capturedVehicles = document.querySelector("#capturedVehicles");
+elements.savedMappings = document.querySelector("#savedMappings");
 
 function send(message) {
   return chrome.runtime.sendMessage(message).then((response) => {
@@ -75,6 +81,20 @@ function render(state) {
   elements.vehicleMappings.value = JSON.stringify({
     tags: state.settings?.vehicleByTag || {}, plates: state.settings?.vehicleByPlate || {}
   }, null, 2);
+  elements.capturedVehicles.replaceChildren(...[...new Set(trips.map((trip) => trip.vehicleId))].map((id) => {
+    const option = document.createElement("option");
+    option.value = id;
+    return option;
+  }));
+  const labels = [];
+  for (const [kind, mappings] of [["Tag", state.settings?.vehicleByTag], ["Plate", state.settings?.vehicleByPlate]]) {
+    for (const [key, vehicle] of Object.entries(mappings || {})) {
+      const label = document.createElement("p");
+      label.textContent = `${kind} ${key} → vehicle ${vehicle}`;
+      labels.push(label);
+    }
+  }
+  elements.savedMappings.replaceChildren(...labels);
   elements.matchedCount.textContent = result.matched?.length || 0;
   const reviewCount = (result.unmatchedTolls?.length || 0) + (result.ambiguous?.length || 0);
   elements.unmatchedCount.textContent = reviewCount;
@@ -120,7 +140,7 @@ async function load() {
 
 elements.syncButton.addEventListener("click", async () => {
   elements.syncButton.disabled = true;
-  setStatus("Reading portal tabs; waiting up to 20 seconds for Turo trips…", "busy");
+  setStatus("Waiting up to 20 seconds for completed Turo history and E-ZPass activity…", "busy");
   try {
     const response = await send({ type: "RUN_SYNC" });
     render(response.state);
@@ -169,6 +189,27 @@ elements.saveMappings.addEventListener("click", async () => {
     } });
     render(state);
     setStatus("Vehicle mappings saved; suggestions recalculated.");
+  } catch (error) { setStatus(error.message, "error"); }
+});
+
+elements.vehicleMappingForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const vehicleId = elements.vehicleIdInput.value.trim();
+  const tag = elements.tagIdInput.value.trim();
+  const plate = elements.plateInput.value.trim();
+  if (!vehicleId || (!tag && !plate)) {
+    setStatus("Enter a Turo vehicle ID and at least one tag or plate.", "error");
+    return;
+  }
+  try {
+    const { state: current } = await send({ type: "GET_STATE" });
+    const { state } = await send({ type: "UPDATE_SETTINGS", settings: {
+      vehicleByTag: { ...current.settings.vehicleByTag, ...(tag ? { [tag]: vehicleId } : {}) },
+      vehicleByPlate: { ...current.settings.vehicleByPlate, ...(plate ? { [plate]: vehicleId } : {}) }
+    } });
+    render(state);
+    elements.vehicleMappingForm.reset();
+    setStatus("Vehicle mapping saved. Leading zeros are preserved.");
   } catch (error) { setStatus(error.message, "error"); }
 });
 

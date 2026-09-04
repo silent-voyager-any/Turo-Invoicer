@@ -1,6 +1,6 @@
 # Project documentation
 
-This reference describes the implementation in version 0.1.0, including the observer-driven Turo sync update. Last reviewed: September 4, 2026.
+This reference describes the implementation in version 0.2.0, including history-only Turo collection, E-ZPass waiting, and manual vehicle mappings. Last reviewed: September 4, 2026.
 
 ## Reading paths
 
@@ -27,7 +27,7 @@ Paths below are relative to the extension directory.
 
 ## Implementation versus roadmap
 
-Implemented: passive capture of supported loaded data, local suggestions, static vehicle mappings, safe ambiguity handling, bounded SPA waiting, and local clearing.
+Implemented: passive capture on the exact history/transactions pages, completed-trip filtering, local suggestions, manual static vehicle mappings, safe ambiguity handling, bounded SPA waiting for both portals, and local clearing.
 
 Not implemented: verified portal API contracts, automatic pagination, CSV/PDF import/export, invoice generation, claim submission, historical tag assignment, account identity verification, completeness certification, automatic retention expiry, backend services, licensing/billing, or a packaged Chrome Web Store release.
 

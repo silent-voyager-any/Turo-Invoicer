@@ -7,7 +7,7 @@
 1. Confirm you loaded the directory containing `manifest.json`, not the repository root.
 2. Reload the extension and both portal tabs after a source update.
 3. Keep exactly one matching tab for each source open and signed in.
-4. Open host trips and transaction activity, not only account landing pages.
+4. Open `/us/en/trips/history` and `/ezpass/dashboard/transactions`, not landing pages or upcoming trips.
 5. Load the intended date range/pages before syncing.
 6. Read the status and last-sync timestamp. Failed refreshes deliberately show prior results.
 
@@ -18,7 +18,7 @@
 | Open a signed-in portal tab | No tab matched that source's permitted origins. Open the canonical portal and navigate to its data page. |
 | Keep exactly one portal tab open | Multiple matching tabs were found. Close duplicates, including other pages on the same permitted origin. |
 | No supported records captured | Collector returned no usable records. Let E-ZPass activity load, then retry. If data is visible, the adapter may not recognize its schema. |
-| Timed out after 20 seconds waiting for complete Turo trips | No supported trip contained a vehicle ID and both time fields during the wait. Check login, host page, data range, and selectors. |
+| Timed out after 20 seconds waiting for complete Turo trips | No supported trip contained a vehicle ID and both time fields during the wait. Check login, history page, data range, and selectors. |
 | Portal tab timed out | No reply arrived before the worker deadline. Keep the tab open; reload extension and tab, then retry. |
 | Receiving end does not exist / connection error | Content script may not be installed in an old tab, or the page navigated. Reload that tab after loading the extension. |
 | Portal navigated away | Pending collection was canceled. Wait on the intended page and sync again. |
@@ -34,11 +34,17 @@ A genuine empty trip/activity range currently cannot be committed as a successfu
 
 ## Why the SPA fix may not solve every empty result
 
-The original collector observed mutations but answered `COLLECT_NOW` immediately. It now keeps the response channel open, waits on DOM/network updates, and uses a 300 ms stable-record window. The worker allows 25 seconds.
+The original collector observed mutations but answered `COLLECT_NOW` immediately. It now keeps the response channel open, waits on DOM/network updates, and uses a 300 ms stable-record window. Both collectors now wait up to 20 seconds, with a 25-second worker allowance. Timeout diagnostics report DOM candidates and supported-path JSON response counts. Zero candidates can indicate an unrecognized container; candidates without records indicate missing or unsupported fields. These counts do not prove completeness.
 
 Waiting cannot create unavailable fields. A visible skeleton is not a trip record; a vehicle display name is not a Turo vehicle ID. Unsupported natural-language timestamps, changed private JSON keys, generic GraphQL endpoints outside the URL filter, and unrecognized DOM containers still need adapter work.
 
 Network records take precedence over DOM records. Stale partial network capture may therefore produce surprising counts. Clear captures and reload before a new account/range workflow. The extension does not verify completeness or load missing pages.
+
+## E-ZPass filters and manual tags
+
+Apply the date, plate, and tag filters in the portal yourself, then sync. Adapters support semantic tables, first-row legacy headers, accessible grids, mobile data labels, split date/time columns, and common punctuation/key variants. They reject posting-only and explicit payment/deposit rows. These are tested fallbacks, not authenticated private-schema guarantees.
+
+If rows remain unsupported, provide only the page path, column headings, and numeric diagnostic counts—never account IDs, cookies, tokens, or raw exports. Enter each car's tag in **Vehicle mappings**; Turo is not assumed to provide E-ZPass tags.
 
 ## Local debugging
 

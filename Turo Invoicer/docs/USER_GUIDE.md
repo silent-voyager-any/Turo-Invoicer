@@ -18,10 +18,10 @@ For an update, replace/update the source, click **Reload** on the extension card
 
 Keep exactly one matching tab per source open:
 
-- Turo: `https://turo.com/us/en/host/trips`.
-- E-ZPass NY: start at `https://www.e-zpassny.com/` and navigate to transaction activity.
+- Turo: `https://turo.com/us/en/trips/history`.
+- E-ZPass NY: `https://www.e-zpassny.com/ezpass/dashboard/transactions`.
 
-Do not leave duplicate matching portal tabs open. Select the intended date range and load the necessary pages within each portal. The extension does not navigate, scroll, paginate, solve challenges, or sign in for you.
+Do not leave duplicate matching history/transactions tabs open. Other Turo pages are ignored. Select the intended date range and load the necessary pages within each portal. The extension does not navigate, scroll, paginate, solve challenges, or sign in for you.
 
 Use toll passage/transaction time, not posting date. Check which vehicles and reservations are actually represented. Clear data and reload before changing accounts or beginning a different date-range capture workflow: tab-memory network records can accumulate during navigation.
 
@@ -29,7 +29,7 @@ Use toll passage/transaction time, not posting date. Check which vehicles and re
 
 Open the extension and click **Sync open tabs**.
 
-Turo waits for records containing a vehicle ID and both trip times, up to 20 seconds. A brief settling window groups nearby render updates. An incoming supported network response can also complete collection. E-ZPass collection does not use this delayed-wait configuration; let its activity page load before syncing.
+Turo waits for records containing a vehicle ID and both trip times, up to 20 seconds. A brief settling window groups nearby render updates. An incoming supported network response can also complete collection. E-ZPass also waits up to 20 seconds for supported activity rows or responses. Use its date, plate, and tag filters before syncing.
 
 Both sources must return nonempty supported data. On success, the worker replaces the saved two-source snapshot and recalculates suggestions. On failure, it leaves the prior saved snapshot unchanged. Check the status message and last-sync timestamp; old results are not evidence of a successful refresh.
 
@@ -37,7 +37,9 @@ A successful sync means supported loaded records were collected—not that every
 
 ## Vehicle mappings
 
-Open **Vehicle mappings** and enter JSON:
+Open **Vehicle mappings**, enter the Turo vehicle ID (from its listing URL), then enter the E-ZPass tag number and/or plate. Click **Save vehicle mapping**. Leading zeros are preserved. Captured vehicle IDs appear as suggestions; before a successful sync you can enter the ID manually. Saving an existing tag/plate updates its assigned vehicle; use **Advanced JSON mappings** to remove entries or edit in bulk.
+
+Turo is not assumed to provide E-ZPass tag numbers. Copy them from your own E-ZPass records. The alternative advanced JSON format is:
 
 ```json
 {
@@ -48,7 +50,7 @@ Open **Vehicle mappings** and enter JSON:
 
 The values must be exact Turo vehicle IDs, not vehicle names or E-ZPass internal vehicle IDs. Keys must match captured tags or plates exactly, including leading zeros, case, and state formatting when supplied. Leave a section as an empty object if unused.
 
-Click **Save mappings** to persist mappings and recalculate the existing snapshot without reloading the portals. Each mapping object supports up to 500 entries.
+Click **Save mappings** to persist mappings and recalculate the existing snapshot without reloading the portals. Each mapping object supports up to 500 entries. A combined Tag/Plate column is preserved as an untyped identifier and resolved only through your explicit tag/plate mappings.
 
 Do not apply one static tag mapping across periods when that tag belonged to different vehicles. Historical assignments are not supported. Conflicting tag and plate mappings are sent for review rather than prioritized silently.
 
@@ -73,6 +75,10 @@ Invalid trip timestamps are excluded from matching. The sync status can report t
 **Clear local data** removes the saved records, results, settings, and mappings. It also requests that reachable portal captures clear memory and pause. If some tabs cannot be reached, reload them.
 
 This action does not delete portal records or browser cookies. A later explicit sync may recapture visible data. There is no automatic retention expiry or undo for cleared extension data; source portal data remains available.
+
+## History-only policy and upgrade
+
+Version 0.2.0 collects Turo data only on trip history. The worker additionally excludes trips whose end time is in the future, along with invalid intervals; this also excludes in-progress trips. Prefetched upcoming trips cannot qualify through grace periods. Reload the extension and both tabs after upgrading. Old version-1 snapshots are not shown, while valid manual mappings are retained for the next sync.
 
 ## Before relying on a suggestion
 

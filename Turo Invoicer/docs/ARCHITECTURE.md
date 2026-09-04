@@ -23,7 +23,7 @@ The portal owns authentication and requests. The worker does not recreate authen
 
 ## Manifest and loading
 
-The worker is an ES module. Static content scripts start at `document_start`. The network hook runs in MAIN; the common collector and the source adapter run in ISOLATED, in that order. The manifest targets top-level pages on the three declared origins.
+The worker is an ES module. Static content scripts start at `document_start`. The network hook runs in MAIN; the common collector and the source adapter run in ISOLATED, in that order. The manifest targets top-level pages on the three declared origins for SPA lifecycle support. Data capture is restricted at runtime to `/us/en/trips/history` and `/ezpass/dashboard/transactions`; other pages do not contribute response bodies or DOM records.
 
 DOM observation uses `document`, because `documentElement` may not exist at startup. No offscreen document is needed for these visible-tab reads. No declarative network rules are used because the extension does not redirect, block, or rewrite requests.
 
@@ -33,21 +33,21 @@ The network hook observes successful fetch/XHR responses whose HTTPS host is in 
 
 Fetch responses are cloned; the original response remains available to the portal. Fetch capture checks content type and bounded stream size. XHR capture parses text/JSON at completion and handles instance reuse. Unsupported or malformed responses are ignored.
 
-The bridge carries the parsed response payload but not its request URL/query string. The isolated collector walks supported objects, extracts allowlisted fields, and keeps normalized records in memory. Full response payloads are not sent to the worker or persisted.
+The bridge carries the parsed response payload plus the fixed supported-page path, not its request URL/query string. Requests started outside a supported page cannot contribute after navigation. The isolated collector walks supported objects, extracts allowlisted fields, and keeps normalized records in memory. Full response payloads are not sent to the worker or persisted.
 
 DOM capture is a fallback. Turo requires a stable vehicle ID and both times; display names do not substitute for identity. E-ZPass requires transaction time, plaza, and amount. Network records take precedence over the current DOM snapshot to avoid double-counting two representations. This also means partial/stale network captures can mask additional DOM records.
 
-## Turo SPA lifecycle
+## Portal SPA lifecycle
 
 1. `COLLECT_NOW` resumes capture and performs an immediate DOM scan.
 2. The listener returns literal `true` to keep Chrome's response channel open.
 3. The existing observer reacts to inserted nodes, text, and selected hydration attributes.
-4. Turo scans are throttled to 100 ms. Supported network responses also notify pending requests.
+4. Both collectors throttle scans to 100 ms. Supported network responses also notify pending requests.
 5. A nonempty record batch unchanged for 300 ms completes the wait.
 6. At 20 seconds, available records are returned even if the batch never settled; otherwise an actionable timeout error is returned.
 7. Deadline and settle timers are cleared when the request finishes. Clearing or navigating cancels pending requests. The observer disconnects on page hide and reattaches on page show, including back/forward restoration.
 
-Skeletons alone do not satisfy the wait. Structural completeness does not imply valid dates; the reconciler performs timestamp validation later. Settling does not prove complete pagination. E-ZPass retains immediate collection and a 500 ms background DOM-observation throttle.
+Skeletons alone do not satisfy the wait. Structural completeness does not imply valid dates; the reconciler performs timestamp validation later. Settling does not prove complete pagination. E-ZPass uses the same delayed collection. Route changes clear captures and cancel pending waits.
 
 ## Internal message reference
 
@@ -59,7 +59,7 @@ These are internal extension messages, not a public web API.
 | Popup -> worker | `RUN_SYNC` | None | `ok, synced, state, collection` |
 | Popup -> worker | `UPDATE_SETTINGS` | `settings` | `ok, state` |
 | Popup -> worker | `CLEAR_LOCAL_DATA` | None | `ok, state, resetFailures` |
-| Worker -> collector | `COLLECT_NOW` | None | `ok, source, records, warning`, or error |
+| Worker -> collector | `COLLECT_NOW` | None | `ok, source, records, pagePath, warning`, or error |
 | Worker -> collector | `CLEAR_CAPTURE` | None | `ok` |
 | MAIN -> ISOLATED | `NETWORK_RESPONSE` | `source: "turo-toll-reconciler-page", payload` | No response |
 
@@ -69,11 +69,11 @@ Privileged worker operations accept only the extension popup sender, not content
 
 ## State and concurrency
 
-The worker queues popup operations to serialize read-modify-write state updates. Within one sync, the two tab requests run concurrently. Exactly one matching tab must exist per source.
+The worker queues popup operations to serialize read-modify-write state updates. Within one sync, the two tab requests run concurrently. Exactly one matching data-page tab must exist per source; other pages are ignored.
 
-The worker allows 25 seconds for Turo's response and 5 seconds for E-ZPass or ordinary tab operations. Both successful nonempty source batches are sanitized, reconciled, and saved together in one storage item. A source error preserves the previous snapshot. This is not a cross-portal transactional snapshot or a completeness guarantee.
+The worker allows 25 seconds for either source collection; ordinary tab operations retain 5 seconds. It rechecks the page after collection and filters Turo to valid completed intervals. Both successful nonempty source batches are sanitized, reconciled, and saved together in one storage item. A source error preserves the previous snapshot. This is not a cross-portal transactional snapshot or a completeness guarantee.
 
-Updates to settings recalculate the current records without changing the source refresh times. On worker restart, persisted state is reloaded. Pending work is not resumable across arbitrary worker/browser termination; retry sync if interrupted.
+Updates to settings recalculate the current records without changing the source refresh times. Schema 2 retires pre-history snapshots while retaining valid legacy vehicle mappings. Timeout diagnostics contain only DOM-candidate and JSON-response counts. On worker restart, persisted state is reloaded. Pending work is not resumable across arbitrary worker/browser termination; retry sync if interrupted.
 
 ## Limits
 

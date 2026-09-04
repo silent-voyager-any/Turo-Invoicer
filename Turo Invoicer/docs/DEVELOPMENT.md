@@ -15,12 +15,14 @@ There are no npm dependencies, bundler, transpiler, or required build outputs. N
 
 ## Test inventory
 
-The current suite has 35 tests across:
+The current suite has 55 tests across:
 
 - `tests/reconciler.test.js`: time zones, DST folds/gaps, calendar validity, amounts, intervals, mappings, grace, immutability.
 - `tests/content.test.js`: field reduction, DOM fallbacks, bridge validation, delayed insertion, attribute hydration, network wakeup, settling, cancellation, concurrent waiters, container isolation.
 - `tests/background.test.js`: trusted senders, atomic state, failed-source preservation, serialized operations, a Turo response delayed beyond five seconds, settings and clearing.
-- `tests/network.test.js`: fetch response preservation, path/domain filtering, XHR reuse, malformed JSON.
+- `tests/network.test.js`: fetch response preservation, path/domain filtering, XHR reuse, malformed JSON, exact-page gating, and request-start provenance.
+- `tests/popup.test.js`: manual tag/plate entry, leading-zero preservation, and retaining other cars' mappings.
+- Additional history cases cover completed-only intervals, off-route rejection, and old-state invalidation; E-ZPass cases cover delayed rows, header variants, mixed identifiers, and posted-only rejection.
 
 The check script verifies manifest declarations, referenced files, intended permissions, and root JavaScript syntax. It does not lint everything, validate documentation, run Chrome, or authenticate portal accounts. Content tests use hand-built DOM mocks; they cannot prove that selector candidates match the live portal.
 
@@ -48,7 +50,9 @@ Verify currency units and passage timestamps. Do not broaden endpoint capture or
 - [ ] Fresh and already-open portal tabs behave correctly after reload.
 - [ ] Logged-out tabs, duplicate tabs, and absent tabs yield understandable errors.
 - [ ] Delayed card insertion and attribute-only hydration produce a bounded response.
-- [ ] Delayed network data can complete the same pending Turo request.
+- [ ] Delayed data completes a pending request on either supported portal route.
+- [ ] Other Turo pages never contribute records; prefetched future trips are excluded.
+- [ ] E-ZPass filters and manual tag entry are exercised against redacted fixtures.
 - [ ] Wrong/unsupported schemas time out without overwriting saved data.
 - [ ] Navigation, popup closure/reopening, extension reload, and worker suspension are exercised.
 - [ ] Back/forward cache restoration reattaches capture correctly.

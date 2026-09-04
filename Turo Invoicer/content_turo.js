@@ -2,12 +2,14 @@
   "use strict";
   const { scalar, pick, timestamp, textOf, tableValues, createCapture } = TollCapture;
 
-  // Fallback candidates for /us/en/host/trips. Prefer semantic attributes and
+  const HISTORY_PATH = "/us/en/trips/history";
+  // Fallback candidates for trip history. Prefer semantic attributes and
   // links over hashed CSS classes; actual live markup still needs fixture QA.
   const CARD_SELECTOR = [
     "[data-trip-id]", "[data-reservation-id]",
     '[data-testid*="trip-card" i]', '[data-testid*="tripcard" i]',
     '[data-test*="trip-card" i]', '[data-testid*="reservation-card" i]',
+    '[data-testid*="history-trip" i]', '[data-testid*="past-trip" i]',
     '[class*="trip-card" i]', '[class*="tripCard"]', "table tbody tr"
   ].join(", ");
   const TRIP_LINK_SELECTOR = [
@@ -57,6 +59,7 @@
   }
 
   function readDom(add) {
+    if (new URL(location.href).pathname.replace(/\/$/, "") !== HISTORY_PATH) return;
     const rows = new Set(document.querySelectorAll(CARD_SELECTOR));
     // Some host layouts use a link-wrapped card or an unlabelled list item.
     for (const link of document.querySelectorAll(TRIP_LINK_SELECTOR)) {
@@ -84,11 +87,11 @@
         start: row.dataset.start || row.dataset.startTime || row.dataset.startDateTime ||
           textOf(row, ['[data-testid="trip-start"]', '[data-testid="trip-start-date"]',
             '[data-testid="tripStartDate"]', '[data-field="start"]', 'time[itemprop="startDate"]']) ||
-          cell([/^start(?: date\/time)?$/, /^trip start$/]) || (times.length === 2 ? times[0] : null),
+          cell([/^start(?: date time)?$/, /^trip start$/]) || (times.length === 2 ? times[0] : null),
         end: row.dataset.end || row.dataset.endTime || row.dataset.endDateTime ||
           textOf(row, ['[data-testid="trip-end"]', '[data-testid="trip-end-date"]',
             '[data-testid="tripEndDate"]', '[data-field="end"]', 'time[itemprop="endDate"]']) ||
-          cell([/^end(?: date\/time)?$/, /^trip end$/]) || (times.length === 2 ? times[1] : null),
+          cell([/^end(?: date time)?$/, /^trip end$/]) || (times.length === 2 ? times[1] : null),
         status: row.dataset.status || cell([/^status$/])
       });
     }
@@ -98,9 +101,11 @@
   // complete trip (vehicle ID + both times), not a skeleton, becomes available.
   // Network responses can satisfy the same pending request during SPA loading.
   createCapture("turo", parseTrip, readDom, {
+    isPageAllowed: (path) => path === HISTORY_PATH,
+    pageMessage: "Turo collection is restricted to /us/en/trips/history. Open that page and sync again.",
     waitTimeoutMs: 20000,
     settleMs: 300,
     observeThrottleMs: 100,
-    emptyMessage: "Timed out after 20 seconds waiting for complete Turo trips. Open /us/en/host/trips, sign in, and load the trip list. If cards are visible, their vehicle IDs or date fields may need an updated adapter."
+    emptyMessage: "Timed out after 20 seconds waiting for complete Turo history records. Open /us/en/trips/history and load past trips. Visible cards still need a stable vehicle ID and full start/end timestamps; unsupported fields need an adapter update."
   });
 })();

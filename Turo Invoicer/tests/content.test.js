@@ -12,7 +12,7 @@ function environment(timers = { setTimeout, clearTimeout }) {
   };
   const runtime = { id: "test-extension", onMessage: { addListener: (callback) => { listeners.runtime = callback; } } };
   const context = vm.createContext({
-    window, document, URL, location: { origin: "https://turo.com", href: "https://turo.com/us/en/host/trips" }, chrome: { runtime },
+    window, document, URL, location: { origin: "https://turo.com", href: "https://turo.com/us/en/trips/history" }, chrome: { runtime },
     MutationObserver: class {
       constructor(callback) { this.callback = callback; observers.push(this); }
       observe(target, options) { this.target = target; this.options = options; this.disconnected = false; }
@@ -25,6 +25,10 @@ function environment(timers = { setTimeout, clearTimeout }) {
 
 function adapter(file) {
   const env = environment();
+  if (file === "content_ezpass.js") {
+    env.context.location.href = "https://www.e-zpassny.com/ezpass/dashboard/transactions";
+    env.context.location.origin = "https://www.e-zpassny.com";
+  }
   let adapter;
   env.context.TollCapture = {
     ...env.context.TollCapture,
@@ -61,7 +65,7 @@ test("DOM dataset fallback extracts toll rows", () => {
   const { document, readDom } = adapter("content_ezpass.js");
   document.querySelectorAll = () => [{
     dataset: { transactionId: "dom1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: "10" },
-    querySelector: () => null, closest: () => null
+    querySelector: () => null, querySelectorAll: () => [], closest: () => null
   }];
   const values = [];
   readDom((value) => values.push(value));
@@ -167,7 +171,7 @@ test("an incoming network response also satisfies a pending Turo collection", ()
   const env = liveTuro();
   env.collect();
   env.listeners.message({ source: env.window, origin: "https://turo.com", data: {
-    source: "turo-toll-reconciler-page", type: "NETWORK_RESPONSE",
+    source: "turo-toll-reconciler-page", type: "NETWORK_RESPONSE", pagePath: "/us/en/trips/history",
     payload: { trips: [{ id: "api-1", vehicleId: "202", start: "2026-09-04 09:00", end: "2026-09-04 18:00" }] }
   } });
   env.clock.tick(300);
@@ -257,4 +261,100 @@ test("a container with links to multiple trips cannot mix their fields", () => {
   let count = 0;
   readDom(() => { count += 1; });
   assert.equal(count, 0);
+});
+
+test("Turo refuses collection off history and never reads those DOM rows", () => {
+  const env = liveTuro();
+  env.context.location.href = "https://turo.com/us/en/trips/upcoming";
+  env.document.querySelectorAll = () => { throw new Error("Off-history DOM must not be read"); };
+  assert.equal(env.collect(), false);
+  assert.equal(env.answers[0].ok, false);
+  assert.match(env.answers[0].error, /restricted/);
+});
+test("leaving history clears captured data and cancels pending collection", () => {
+  const env = liveTuro();
+  env.rows([completeTrip()]);
+  env.collect();
+  env.context.location.href = "https://turo.com/us/en/trips/upcoming";
+  env.mutate();
+  env.clock.tick(100);
+  assert.equal(env.answers[0].ok, false);
+  env.context.location.href = "https://turo.com/us/en/trips/history";
+  env.rows([]);
+  env.collect();
+  env.clock.tick(20000);
+  assert.equal(env.answers[1].ok, false);
+});
+test("Turo rejects network data without history provenance", () => {
+  const env = liveTuro();
+  env.collect();
+  env.listeners.message({ source: env.window, origin: "https://turo.com", data: {
+    source: "turo-toll-reconciler-page", type: "NETWORK_RESPONSE", pagePath: "/us/en/trips/upcoming",
+    payload: { trips: [{ id: "wrong", vehicleId: "202", start: "2026-01-01 09:00", end: "2026-01-01 18:00" }] }
+  } });
+  env.clock.tick(20000);
+  assert.equal(env.answers[0].ok, false);
+});
+
+function transactionRow(headers, values, variant = "table") {
+  const node = (text, attributes = {}) => ({ textContent: text, getAttribute: (key) => attributes[key] || null });
+  const headerNodes = headers.map((label) => node(label));
+  const cells = values.map((value, index) => node(value, variant === "mobile" ? { "data-label": headers[index] } : {}));
+  const container = {
+    querySelectorAll: () => variant === "legacy" ? [] : headerNodes,
+    querySelector: () => ({ querySelectorAll: () => headerNodes })
+  };
+  return {
+    dataset: {}, closest: () => variant === "mobile" ? null : container,
+    querySelectorAll: () => cells, querySelector: () => null
+  };
+}
+
+for (const variant of ["table", "legacy", "grid", "mobile"]) {
+  test(`E-ZPass ${variant} extracts transaction datetime, toll amount and mixed tag/plate`, () => {
+    const { document, readDom, parse } = adapter("content_ezpass.js");
+    const row = transactionRow(
+      ["Posted Date", "Transaction Date & Time", "Exit Plaza", "Toll Amount", "Tag # / Plate #"],
+      ["09/06/2026", "09/04/2026 12:30 PM", "Lincoln", "$15.00", "0012345678"], variant
+    );
+    document.querySelectorAll = () => [row];
+    const records = [];
+    readDom((candidate) => records.push(parse(candidate)));
+    assert.equal(records[0].timestamp, "09/04/2026 12:30 PM");
+    assert.equal(records[0].amount, "$15.00");
+    assert.equal(records[0].tagOrPlate, "0012345678");
+    assert.equal(records[0].tagId, null);
+  });
+}
+test("E-ZPass rejects posted-only and payment rows", () => {
+  const { document, readDom, parse } = adapter("content_ezpass.js");
+  document.querySelectorAll = () => [transactionRow(["Posted Date", "Amount", "Description"], ["09/04/2026 12:00", "15.00", "Example"]),
+    transactionRow(["Transaction Date/Time", "Amount", "Description", "Type"], ["09/04/2026 12:00", "15.00", "Deposit", "Payment"])];
+  const records = [];
+  readDom((candidate) => { const result = parse(candidate); if (result) records.push(result); });
+  assert.equal(records.length, 0);
+});
+test("E-ZPass normalizes snake-case aliases and combines separate date/time columns", () => {
+  const { parse, document, readDom } = adapter("content_ezpass.js");
+  assert.equal(parse({ transaction_date: "09/04/2026", transaction_time: "12:30 PM", exit_plaza: { name: "Lincoln" }, toll_amount: "15.00" }).timestamp,
+    "09/04/2026 12:30 PM");
+  document.querySelectorAll = () => [transactionRow(["Transaction Date", "Transaction Time", "Plaza", "Amount"],
+    ["09/04/2026", "12:30 PM", "Lincoln", "15.00"])];
+  readDom((candidate) => assert.equal(parse(candidate).timestamp, "09/04/2026 12:30 PM"));
+});
+test("E-ZPass waits for asynchronously loaded transaction rows on its exact data route", () => {
+  const clock = fakeClock();
+  const env = environment({ setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout });
+  env.context.location.href = "https://www.e-zpassny.com/ezpass/dashboard/transactions";
+  env.context.location.origin = "https://www.e-zpassny.com";
+  vm.runInContext(readFileSync("content_ezpass.js", "utf8"), env.context);
+  const answers = [];
+  assert.equal(env.listeners.runtime({ type: "COLLECT_NOW" }, { id: "test-extension" }, (value) => answers.push(value)), true);
+  clock.tick(6000);
+  assert.equal(answers.length, 0);
+  env.document.querySelectorAll = () => [transactionRow(["Transaction Date/Time", "Plaza", "Amount"], ["09/04/2026 12:30 PM", "Lincoln", "15.00"])];
+  env.observers[0].callback([]);
+  clock.tick(400);
+  assert.equal(answers[0].records.length, 1);
+  assert.equal(answers[0].pagePath, "/ezpass/dashboard/transactions");
 });
