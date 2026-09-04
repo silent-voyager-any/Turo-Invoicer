@@ -10,7 +10,7 @@
     '[data-testid*="trip-card" i]', '[data-testid*="tripcard" i]',
     '[data-test*="trip-card" i]', '[data-testid*="reservation-card" i]',
     '[data-testid*="history-trip" i]', '[data-testid*="past-trip" i]',
-    '[class*="trip-card" i]', '[class*="tripCard"]', "table tbody tr"
+    '[class*="trip-card" i]', '[class*="tripCard"]', "table tbody tr", '[data-testid="baseTripCard"]'
   ].join(", ");
   const TRIP_LINK_SELECTOR = [
     'a[href*="/host/trips/"]', 'a[href*="/trips/"]',
@@ -58,11 +58,12 @@
     };
   }
 
-  function readDom(add) {
+  function readDom(add, root = document, detailId = null) {
     if (new URL(location.href).pathname.replace(/\/$/, "") !== HISTORY_PATH) return;
-    const rows = new Set(document.querySelectorAll(CARD_SELECTOR));
+    const rows = new Set(root.querySelectorAll(CARD_SELECTOR));
+    if (detailId) for (const main of root.querySelectorAll("main")) rows.add(main);
     // Some host layouts use a link-wrapped card or an unlabelled list item.
-    for (const link of document.querySelectorAll(TRIP_LINK_SELECTOR)) {
+    for (const link of root.querySelectorAll(TRIP_LINK_SELECTOR)) {
       if (!linkId(link, "trip")) continue;
       rows.add(link.closest(CARD_SELECTOR + ', article, li, [role="listitem"]') || link);
     }
@@ -81,7 +82,7 @@
       // Only use positional <time>s when exactly two exist in the same card.
       // Labelled fields win over other timestamps such as booking/return updates.
       add({
-        tripId: row.dataset.tripId || row.dataset.reservationId || [...tripIds][0] || cell([/^trip id$/, /^reservation id$/]),
+        tripId: row.dataset.tripId || row.dataset.reservationId || [...tripIds][0] || cell([/^trip id$/, /^reservation id$/]) || detailId,
         vehicleId: row.dataset.vehicleId || row.dataset.listingId || vehicle?.dataset.vehicleId ||
           vehicle?.dataset.listingId || [...vehicleIds][0] || cell([/^vehicle id$/, /^listing id$/]),
         start: row.dataset.start || row.dataset.startTime || row.dataset.startDateTime ||
@@ -101,11 +102,12 @@
   // complete trip (vehicle ID + both times), not a skeleton, becomes available.
   // Network responses can satisfy the same pending request during SPA loading.
   createCapture("turo", parseTrip, readDom, {
+    enrichment: TuroDetails.create(parseTrip, readDom),
     isPageAllowed: (path) => path === HISTORY_PATH,
     pageMessage: "Turo collection is restricted to /us/en/trips/history. Open that page and sync again.",
     waitTimeoutMs: 20000,
     settleMs: 300,
     observeThrottleMs: 100,
-    emptyMessage: "Timed out after 20 seconds waiting for complete Turo history records. Open /us/en/trips/history and load past trips. Visible cards still need a stable vehicle ID and full start/end timestamps; unsupported fields need an adapter update."
+    emptyMessage: "Timed out after 20 seconds waiting for complete Turo history records. Open /us/en/trips/history and load past trips. No supported history reservation links or complete records appeared."
   });
 })();

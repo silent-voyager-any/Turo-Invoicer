@@ -38,6 +38,16 @@ The original collector observed mutations but answered `COLLECT_NOW` immediately
 
 Waiting cannot create unavailable fields. A visible skeleton is not a trip record; a vehicle display name is not a Turo vehicle ID. Unsupported natural-language timestamps, changed private JSON keys, generic GraphQL endpoints outside the URL filter, and unrecognized DOM containers still need adapter work.
 
+### History cards found, but no complete records
+
+Version 0.2.1 recognizes `baseTripCard` links such as `/us/en/reservation/900001`. A short date label (for example, `Aug 27 - Aug 30`) lacks the year and clocks. Sync now reads linked detail pages to obtain these fields instead of extending the wait or guessing values.
+
+- **No supported full timestamps and vehicle ID / app shell:** Turo returned HTML without supported data. Open one linked reservation normally and inspect its full date/time and vehicle fields. A redacted example is needed to adapt unsupported markup; do not share guest information or credentials.
+- **Blocked, redirected, HTTP error:** open the reservation and verify your session normally. No challenge bypass or automatic redirect following is attempted.
+- **Details incomplete / more than 50 reservations:** reload history and load fewer cards, then retry. There are at most three simultaneous reads, each limited to six seconds, within the existing 20-second sync deadline.
+
+Failure preserves the previous snapshot. Automated tests use synthetic detail responses; a successful live extraction is not guaranteed by passing those tests.
+
 Network records take precedence over DOM records. Stale partial network capture may therefore produce surprising counts. Clear captures and reload before a new account/range workflow. The extension does not verify completeness or load missing pages.
 
 ## E-ZPass filters and manual tags

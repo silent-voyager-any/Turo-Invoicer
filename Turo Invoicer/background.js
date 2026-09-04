@@ -121,7 +121,7 @@ async function collect(source) {
     };
   }
   try {
-    // Both portals can hydrate asynchronously: 20s content deadline + margin.
+    // Turo detail reads share its 20s content deadline; allow 5s for the reply.
     const response = await tabRequest(tabs[0].id, { type: "COLLECT_NOW" }, 25000);
     if (response?.source !== source || !response.ok) throw new Error(response?.error || "Unexpected portal response.");
     if (source === "turo" && response.pagePath !== HISTORY_PATH) throw new Error("Reload the extension and Turo history tab; the history-only collector is not active.");

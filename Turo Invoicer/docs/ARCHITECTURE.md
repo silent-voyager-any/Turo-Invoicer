@@ -19,11 +19,11 @@ Popup <-- results --- service worker <-- records ------- each source tab
                      chrome.storage.local
 ```
 
-The portal owns authentication and requests. The worker does not recreate authenticated HTTP calls or move credentials across domains. Cross-domain orchestration here means asking the two tab-local collectors for records.
+The portal owns authentication. The worker does not recreate authenticated HTTP calls or move credentials across domains. Cross-domain orchestration here means asking the two tab-local collectors for records. During explicit collection, the isolated Turo reader can additionally GET reservation pages linked from loaded history cards using the same-origin browser session.
 
 ## Manifest and loading
 
-The worker is an ES module. Static content scripts start at `document_start`. The network hook runs in MAIN; the common collector and the source adapter run in ISOLATED, in that order. The manifest targets top-level pages on the three declared origins for SPA lifecycle support. Data capture is restricted at runtime to `/us/en/trips/history` and `/ezpass/dashboard/transactions`; other pages do not contribute response bodies or DOM records.
+The worker is an ES module. Static content scripts start at `document_start`. The network hook runs in MAIN; the common collector, Turo detail helper (Turo only), and source adapter run in ISOLATED, in that order. The manifest targets top-level pages on the three declared origins for SPA lifecycle support. Passive data capture is restricted at runtime to `/us/en/trips/history` and `/ezpass/dashboard/transactions`. Other open pages are not collected; history-linked detail HTML is fetched separately without navigation.
 
 DOM observation uses `document`, because `documentElement` may not exist at startup. No offscreen document is needed for these visible-tab reads. No declarative network rules are used because the extension does not redirect, block, or rewrite requests.
 
@@ -37,14 +37,20 @@ The bridge carries the parsed response payload plus the fixed supported-page pat
 
 DOM capture is a fallback. Turo requires a stable vehicle ID and both times; display names do not substitute for identity. E-ZPass requires transaction time, plaza, and amount. Network records take precedence over the current DOM snapshot to avoid double-counting two representations. This also means partial/stale network captures can mask additional DOM records.
 
+### History-linked details
+
+`turo_details.js` discovers `a[data-testid="baseTripCard"][href]` and reservation links inside semantic trip-ID containers. Only exact same-origin `/us/en/reservation/<numeric-id>` pages qualify. It strips queries/fragments and rejects credentials and redirects. Complete captured records for those IDs avoid a GET; otherwise a three-wide pool reads their HTML. A detached template allows inert extraction of JSON script bodies or semantic detail fields. JSON objects must carry the exact linked reservation ID; identity and dates are never joined across unrelated objects. Semantic detail fallback uses the fetched page's ID and rejects mixed-trip containers. Cancelled reservations are omitted; missing or conflicting details fail the batch.
+
+Each collection accumulates discovered IDs to tolerate virtualization. Once linked cards exist, only these reservations are returned; all must resolve before success. No automatic pagination is attempted. Detail jobs start only during `COLLECT_NOW` and are discarded after the last waiter ends. Clear/navigation abort outstanding reads and invalidate late results. Full timestamps and vehicle IDs are required; abbreviated month/day labels and model names are insufficient. This parser is fixture-tested, not authenticated-portal verified.
+
 ## Portal SPA lifecycle
 
 1. `COLLECT_NOW` resumes capture and performs an immediate DOM scan.
 2. The listener returns literal `true` to keep Chrome's response channel open.
 3. The existing observer reacts to inserted nodes, text, and selected hydration attributes.
 4. Both collectors throttle scans to 100 ms. Supported network responses also notify pending requests.
-5. A nonempty record batch unchanged for 300 ms completes the wait.
-6. At 20 seconds, available records are returned even if the batch never settled; otherwise an actionable timeout error is returned.
+5. A nonempty record batch unchanged for 300 ms completes the wait, provided all discovered Turo details have resolved. Route and link discovery are rechecked before replying.
+6. At 20 seconds, available records are returned even if the batch never settled, unless Turo details remain unresolved or failed; those conditions return an error and preserve prior results. Otherwise an empty capture returns an actionable timeout error.
 7. Deadline and settle timers are cleared when the request finishes. Clearing or navigating cancels pending requests. The observer disconnects on page hide and reattaches on page show, including back/forward restoration.
 
 Skeletons alone do not satisfy the wait. Structural completeness does not imply valid dates; the reconciler performs timestamp validation later. Settling does not prove complete pagination. E-ZPass uses the same delayed collection. Route changes clear captures and cancel pending waits.
@@ -82,6 +88,8 @@ Updates to settings recalculate the current records without changing the source 
 | Content cache | 5,000 records per map; worker accepts at most 5,000 per batch |
 | JSON traversal | 20,000 queued nodes, maximum depth 8 |
 | Fetch stream | 2,000,000 bytes |
+| History details | 50 discovered IDs per collection, 3 concurrent GETs, 6 seconds per GET, within 20 seconds overall |
+| Detail JSON traversal | 20,000 visited nodes across scripts, maximum depth 12; 2,000,000-byte HTML limit |
 | JSON text/published serialization | 2,000,000 JavaScript characters |
 | Stored scalar strings | At most 250 characters |
 | Mapping entries | 500 per tag map and per plate map |

@@ -140,7 +140,7 @@ async function load() {
 
 elements.syncButton.addEventListener("click", async () => {
   elements.syncButton.disabled = true;
-  setStatus("Waiting up to 20 seconds for completed Turo history and E-ZPass activity…", "busy");
+  setStatus("Waiting up to 20 seconds for Turo history/reservation details and E-ZPass activity…", "busy");
   try {
     const response = await send({ type: "RUN_SYNC" });
     render(response.state);

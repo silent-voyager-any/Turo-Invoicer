@@ -1,6 +1,6 @@
 # Project documentation
 
-This reference describes the implementation in version 0.2.0, including history-only Turo collection, E-ZPass waiting, and manual vehicle mappings. Last reviewed: September 4, 2026.
+This reference describes version 0.2.1, including history-linked reservation detail reads, completed-trip filtering, E-ZPass waiting, and manual vehicle mappings. Last reviewed: September 4, 2026.
 
 ## Reading paths
 
@@ -19,6 +19,7 @@ Paths below are relative to the extension directory.
 | [network_hook.js](../network_hook.js) | MAIN-world fetch/XHR response observation |
 | [content_common.js](../content_common.js) | Bridge validation, bounded records, shared observer, async replies |
 | [content_turo.js](../content_turo.js) | Turo record aliases, host-card selectors, wait configuration |
+| [turo_details.js](../turo_details.js) | Bounded same-origin history-linked detail GETs and inert HTML/JSON parsing |
 | [content_ezpass.js](../content_ezpass.js) | E-ZPass record aliases and activity-table fallbacks |
 | [reconciler.js](../reconciler.js) | Pure normalization and interval matching |
 | [popup.js](../popup.js), [popup.html](../popup.html), [popup.css](../popup.css) | Host-facing controls and results |
@@ -27,7 +28,7 @@ Paths below are relative to the extension directory.
 
 ## Implementation versus roadmap
 
-Implemented: passive capture on the exact history/transactions pages, completed-trip filtering, local suggestions, manual static vehicle mappings, safe ambiguity handling, bounded SPA waiting for both portals, and local clearing.
+Implemented: passive capture on the exact history/transactions pages, explicit-sync reads of history-linked reservation pages, completed-trip filtering, local suggestions, manual static vehicle mappings, safe ambiguity handling, bounded SPA waiting for both portals, and local clearing.
 
 Not implemented: verified portal API contracts, automatic pagination, CSV/PDF import/export, invoice generation, claim submission, historical tag assignment, account identity verification, completeness certification, automatic retention expiry, backend services, licensing/billing, or a packaged Chrome Web Store release.
 

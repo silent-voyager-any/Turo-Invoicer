@@ -8,6 +8,10 @@ The extension uses portal tabs the host has already signed into. It does not pre
 
 It observes response bodies and DOM content on permitted pages. Endpoint filtering is heuristic, not a guarantee that a response contains no sensitive fields. Parsed response payloads cross the page-to-content-script bridge before adapters reduce them. Only allowlisted toll/trip fields are sent to the worker and stored.
 
+Explicit sync also issues read-only GETs from the isolated Turo content script to numeric `/us/en/reservation/<id>` links discovered in history cards. The origin is fixed to `https://turo.com`; queries/fragments are stripped, embedded credentials are rejected, and redirects are refused. Chrome attaches same-origin session credentials; the extension never inspects them. This follows Chrome's [content-script network request model](https://developer.chrome.com/docs/extensions/develop/concepts/network-requests). No arbitrary URL command is exposed through page messaging or the worker.
+
+Detail HTML is parsed only in a detached inert template, never inserted into an active document. Only JSON script bodies are decoded; downloaded JavaScript is never executed. Payloads may transiently contain personal information, but only the matching reservation's allowlisted fields survive parsing. Detail jobs/results are discarded after collection, clear, or navigation. Reads stop on unsupported/sign-in/challenge responses instead of attempting a bypass.
+
 ## Permissions
 
 | Declaration | Purpose |
@@ -17,7 +21,7 @@ It observes response bodies and DOM content on permitted pages. Endpoint filteri
 | `https://www.e-zpassny.com/*` | Inject collectors and query/message the NY portal tab |
 | `https://e-zpassny.com/*` | Support the portal's apex hostname |
 
-No `cookies`, `webRequest`, `tabs`, `scripting`, `activeTab`, `offscreen`, `declarativeNetRequest`, `unlimitedStorage`, or all-sites permission is declared. Static script injection and matching tab access use the declared host permissions. The page observer can see same-domain-family API responses made by the page without issuing its own API requests. Body capture is restricted to the exact history and transactions page paths; origin-wide startup registration supports SPA navigation.
+No `cookies`, `webRequest`, `tabs`, `scripting`, `activeTab`, `offscreen`, `declarativeNetRequest`, `unlimitedStorage`, or all-sites permission is declared. Static script injection and matching tab access use the declared host permissions. The passive page observer makes no API requests. Its body capture is restricted to the exact history and transactions page paths; origin-wide startup registration supports SPA navigation. The separate history detail reader performs only the bounded same-origin page GETs described above, without additional permissions.
 
 ## Trust boundaries
 

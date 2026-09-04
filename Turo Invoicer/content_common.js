@@ -76,8 +76,8 @@
     const waitTimeoutMs = Math.min(20000, Math.max(0, options.waitTimeoutMs || 0));
     const settleMs = Math.max(0, options.settleMs ?? 300);
     const records = () => [...(network.size ? network : dom).values()];
-    const snapshot = () => ({
-      ok: true, source, records: records(), ...(options.isPageAllowed ? { pagePath: capturePath } : {}),
+    const snapshot = (current = records()) => ({
+      ok: true, source, records: current, ...(options.isPageAllowed ? { pagePath: capturePath } : {}),
       warning: capped ? "Capture limit reached; narrow the portal date range and reload." :
         "Only loaded records are included; pagination and completeness are not verified."
     });
@@ -91,6 +91,7 @@
         networkMessages = 0;
         domCandidates = 0;
         for (const check of [...pending]) check.cancel(options.pageMessage || "Portal left the supported data page. Return and sync again.");
+        options.enrichment?.reset();
       }
       capturePath = path;
       return !options.isPageAllowed || options.isPageAllowed(path);
@@ -109,23 +110,49 @@
         clearTimeout(deadline);
         clearTimeout(quietTimer);
         pending.delete(check);
+        if (!pending.size) options.enrichment?.reset();
         reply(result);
       };
       const check = () => {
+        if (done) return;
         if (!checkPage()) return;
-        const current = records();
+        // Detail reads start only inside an explicit collection, never during
+        // passive DOM observation. Missing details cannot yield partial success.
+        const enriched = options.enrichment?.refresh(records(), notify);
+        if (enriched?.error) { finish({ ok: false, source, error: enriched.error }); return; }
+        if (enriched?.pending) {
+          clearTimeout(quietTimer);
+          lastSignature = null;
+          return;
+        }
+        const current = enriched?.records || records();
         const signature = current.length ? JSON.stringify(current) : null;
         if (signature === lastSignature) return;
         lastSignature = signature;
         clearTimeout(quietTimer);
-        if (signature) quietTimer = setTimeout(() => finish(snapshot()), settleMs);
+        if (signature) quietTimer = setTimeout(() => {
+          // SPA route changes do not always produce a DOM mutation.
+          if (!checkPage()) return;
+          const latest = options.enrichment?.refresh(records(), notify);
+          if (latest?.pending || latest?.error || latest && JSON.stringify(latest.records) !== signature) {
+            lastSignature = null;
+            check();
+          } else finish(snapshot(current));
+        }, settleMs);
       };
       check.cancel = (error) => finish({ ok: false, source, error });
       const deadline = setTimeout(() => {
         // A busy/virtualized SPA may never become quiet. Return available data
         // at the deadline, but never claim that its pagination is complete.
         extractDom();
-        finish(records().length ? snapshot() : {
+        if (done) return;
+        const enriched = options.enrichment?.refresh(records(), notify);
+        if (enriched?.error || enriched?.pending) {
+          finish({ ok: false, source, error: enriched.error || enriched.timeoutError });
+          return;
+        }
+        const current = enriched?.records || records();
+        finish(current.length ? snapshot(current) : {
           ok: false, source,
           error: (options.emptyMessage || "Timed out waiting for supported portal records.") +
             ` Diagnostics: ${domCandidates} DOM row/card candidates, ${networkMessages} supported-path JSON responses observed; neither yielded complete records.`
@@ -191,6 +218,7 @@
         networkMessages = 0;
         domCandidates = 0;
         for (const check of [...pending]) check.cancel("Capture cleared while waiting for portal data.");
+        options.enrichment?.reset();
         reply({ ok: true });
       } else if (message?.type === "COLLECT_NOW") {
         if (!checkPage()) {
@@ -232,6 +260,7 @@
       observer.disconnect();
       if (options.isPageAllowed) { network.clear(); dom.clear(); }
       for (const check of [...pending]) check.cancel("Portal navigated away while waiting for data. Try sync again.");
+      options.enrichment?.reset();
     });
     window.addEventListener("pageshow", () => {
       observer.observe(document, observerOptions); // Also handles back/forward cache restore.
