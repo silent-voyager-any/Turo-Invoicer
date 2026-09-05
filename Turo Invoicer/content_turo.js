@@ -33,18 +33,37 @@
     } catch { return null; }
   }
 
-  // These are defensive schema adapters, not verified private API contracts.
+  function tripBoundary(value, objectKeys, instantKeys, dateKeys, timeKeys) {
+    const boundary = pick(value, objectKeys);
+    const direct = scalar(boundary);
+    if (direct != null) return direct;
+    if (boundary && typeof boundary === "object") {
+      // The live reservation endpoint exposes both an absolute epoch and local
+      // display fields. Prefer the epoch so DST and offsets are unambiguous.
+      const epoch = scalar(pick(boundary, ["epochMillis", "epochMilliseconds", "timestampMillis"]));
+      if (epoch != null) return epoch;
+      const instant = scalar(pick(boundary, ["dateTime", "isoDateTime", "instant"]));
+      if (instant != null) return instant;
+      const localDate = scalar(pick(boundary, ["localDate"]));
+      const localTime = scalar(pick(boundary, ["localTime"]));
+      if (typeof localDate === "string" && typeof localTime === "string") return `${localDate} ${localTime}`;
+    }
+    return timestamp(value, instantKeys, dateKeys, timeKeys);
+  }
+
+  // Defensive aliases remain for captured list responses, while the nested
+  // tripStart/tripEnd shape is verified against Turo's reservation endpoint.
   function parseTrip(value) {
-    const status = String(pick(value, ["status", "tripStatus", "reservationStatus"]) || "");
+    const status = String(pick(value, ["statusCode", "status", "tripStatus", "reservationStatus"]) || "");
     if (/cancel|declin|reject/i.test(status)) {
       const id = scalar(pick(value, ["tripId", "reservationId", "bookingId", "id"]));
       return id == null ? null : { id, _remove: true };
     }
-    const start = timestamp(value,
-      ["start", "startDateTime", "startAt", "startsAt", "tripStart", "pickupAt"],
+    const start = tripBoundary(value, ["tripStart"],
+      ["start", "startDateTime", "startAt", "startsAt", "pickupAt"],
       ["startDate", "tripStartDate", "pickupDate"], ["startTime", "pickupTime"]);
-    const end = timestamp(value,
-      ["end", "endDateTime", "endAt", "endsAt", "tripEnd", "returnAt"],
+    const end = tripBoundary(value, ["tripEnd"],
+      ["end", "endDateTime", "endAt", "endsAt", "returnAt"],
       ["endDate", "tripEndDate", "returnDate"], ["endTime", "returnTime"]);
     // Some APIs expose epoch/ISO instants in startTime/endTime.
     const startValue = start ?? scalar(pick(value, ["startTime"]));
@@ -102,7 +121,7 @@
   // complete trip (vehicle ID + both times), not a skeleton, becomes available.
   // Network responses can satisfy the same pending request during SPA loading.
   createCapture("turo", parseTrip, readDom, {
-    enrichment: TuroDetails.create(parseTrip, readDom),
+    enrichment: TuroDetails.create(parseTrip),
     isPageAllowed: (path) => path === HISTORY_PATH,
     pageMessage: "Turo collection is restricted to /us/en/trips/history. Open that page and sync again.",
     waitTimeoutMs: 20000,

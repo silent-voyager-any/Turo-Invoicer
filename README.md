@@ -4,7 +4,7 @@ A local-first Chrome extension that helps Turo hosts reconcile NY E-ZPass toll a
 
 The extension observes data loaded in your signed-in browser tabs, matches toll timestamps to trip intervals, and presents suggestions for review. It does not require a server, store portal passwords, or submit reimbursement claims.
 
-> **Status: development scaffold, version 0.2.1.** Automated tests cover matching, extraction adapters, messaging, and SPA waiting. Authenticated production portal schemas and end-to-end operation still require validation. Do not treat suggestions as verified billing evidence.
+> **Status: development scaffold, version 0.2.2.** Automated tests cover matching, extraction adapters, messaging, and SPA waiting. The Turo reservation-detail response shape has been inspected in an authenticated browser, but full end-to-end portal operation still requires validation. Do not treat suggestions as verified billing evidence.
 
 ## Features
 
@@ -19,9 +19,9 @@ The extension observes data loaded in your signed-in browser tabs, matches toll 
 - Local snapshots, atomic two-source sync, and a clear-data control.
 - No backend uploads, analytics, remote scripts, or automatic claim submission.
 
-## Version 0.2.1 update
+## Version 0.2.2 update
 
-History cards such as `baseTripCard` can show only month/day dates and a vehicle name. During explicit sync, the extension now reads same-origin reservation pages linked by these cards to obtain full timestamps and stable vehicle IDs. It never guesses a year, time, or ID from the card label. Reads are bounded and cancelled on navigation; missing detail data preserves prior results. App-shell-only, sign-in, challenge, and unsupported detail layouts still require manual inspection or an adapter update. No new permissions are needed.
+History cards such as `baseTripCard` can show only month/day dates and a vehicle name. During explicit sync, the extension now converts those numeric reservation links into narrowly allowlisted, same-origin JSON detail requests. It reads the endpoint's epoch trip boundaries and stable vehicle ID, never guessing a year, time, or ID from the card label. Reads are bounded and cancelled on navigation; malformed, redirected, oversized, signed-out, and unsupported responses preserve prior results. No new permissions are needed.
 
 Sync starts only from `https://turo.com/us/en/trips/history` and `https://www.e-zpassny.com/ezpass/dashboard/transactions`; only history-linked Turo details may be read additionally. Use the E-ZPass portal's date, plate, and tag filters yourself. The popup provides manual vehicle-ID/tag/plate entry; Turo is not assumed to expose transponder numbers. Old pre-history snapshots are retired while valid vehicle mappings are retained. Reload the extension and both tabs after updating.
 

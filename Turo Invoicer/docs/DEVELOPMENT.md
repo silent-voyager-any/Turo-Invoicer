@@ -23,7 +23,7 @@ The current suite has 67 tests across:
 - `tests/network.test.js`: fetch response preservation, path/domain filtering, XHR reuse, malformed JSON, exact-page gating, and request-start provenance.
 - `tests/popup.test.js`: manual tag/plate entry, leading-zero preservation, and retaining other cars' mappings.
 - Additional history cases cover completed-only intervals, off-route rejection, and old-state invalidation; E-ZPass cases cover delayed rows, header variants, mixed identifiers, and posted-only rejection.
-- Detail-read cases cover synthetic `baseTripCard` discovery, URL allowlists, exact reservation identity, full clocks, conflicting JSON, semantic detail fields, app shells, concurrency, cancellation, oversized responses, failures, and avoiding unnecessary GETs. Detached-template parsing is mocked; authenticated HTML rendering still requires Chrome QA.
+- Detail-read cases cover synthetic `baseTripCard` discovery, generated endpoint allowlists, exact reservation identity, nested epoch and local timestamps, conflicting or malformed JSON, response type/size/URL validation, concurrency, cancellation, failures, and avoiding unnecessary GETs. The synthetic fixture mirrors the field shape inspected in an authenticated browser without retaining account data.
 
 The check script verifies manifest declarations, referenced files, intended permissions, and root JavaScript syntax. It does not lint everything, validate documentation, run Chrome, or authenticate portal accounts. Content tests use hand-built DOM mocks; they cannot prove that selector candidates match the live portal.
 
@@ -36,7 +36,7 @@ The check script verifies manifest declarations, referenced files, intended perm
 5. Make the smallest adapter change:
    - response selection: `network_hook.js`;
    - schema aliases and DOM fields: the source content script;
-   - history-linked detail discovery, bounded GETs and JSON parsing: `turo_details.js`;
+   - history-linked detail discovery, endpoint allowlisting, bounded GETs and JSON parsing: `turo_details.js`;
    - observer/reply lifecycle: `content_common.js`;
    - canonical normalization: `reconciler.js`.
 6. Re-run tests/checks, reload the extension and tabs, and manually compare source counts and values.
@@ -54,8 +54,8 @@ Verify currency units and passage timestamps. Do not broaden endpoint capture or
 - [ ] Delayed card insertion and attribute-only hydration produce a bounded response.
 - [ ] Delayed data completes a pending request on either supported portal route.
 - [ ] Other Turo pages never contribute records; prefetched future trips are excluded.
-- [ ] Only history-linked reservation pages are requested during sync, with no redirects or background polling.
-- [ ] Actual detail HTML/embedded JSON yields the correct year, exact clocks and vehicle ID; app shells fail safely.
+- [ ] Only the fixed detail endpoint for history-linked numeric reservation IDs is requested during sync, with no redirects or background polling.
+- [ ] Actual detail JSON yields the correct epoch boundaries and vehicle ID; malformed, non-JSON, signed-out, and changed-schema responses fail safely.
 - [ ] E-ZPass filters and manual tag entry are exercised against redacted fixtures.
 - [ ] Wrong/unsupported schemas time out without overwriting saved data.
 - [ ] Navigation, popup closure/reopening, extension reload, and worker suspension are exercised.

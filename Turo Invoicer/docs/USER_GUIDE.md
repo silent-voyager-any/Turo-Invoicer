@@ -31,9 +31,9 @@ Open the extension and click **Sync open tabs**.
 
 Turo waits for records containing a vehicle ID and both trip times, up to 20 seconds. A brief settling window groups nearby render updates. An incoming supported network response can also complete collection. E-ZPass also waits up to 20 seconds for supported activity rows or responses. Use its date, plate, and tag filters before syncing.
 
-During sync, history cards with reservation links can trigger read-only requests to their detail pages. Your history tab stays in place. Up to 50 discovered reservations are supported, with three requests at once and a six-second limit per read, inside the total 20-second collection deadline. Every discovered reservation must resolve; failed or incomplete reads do not replace prior results. Keep history open and avoid changing its range during sync. If the range is too large, reload and load fewer cards before retrying.
+During sync, history cards with numeric reservation links can trigger read-only requests to Turo's same-origin reservation-detail JSON endpoint. Your history tab stays in place. Up to 50 discovered reservations are supported, with three requests at once and a six-second limit per read, inside the total 20-second collection deadline. Every discovered reservation must resolve; failed or incomplete reads do not replace prior results. Keep history open and avoid changing its range during sync. If the range is too large, reload and load fewer cards before retrying.
 
-Short labels such as `Aug 27 - Aug 30` do not supply a year or exact clocks. The extension only uses full detail timestamps and stable vehicle IDs. If Turo serves an app shell without these fields, open one linked reservation normally and inspect it; provide redacted date/vehicle markup for adapter work, never credentials or guest details. The extension does not execute downloaded scripts or bypass sign-in/challenge pages.
+Short labels such as `Aug 27 - Aug 30` do not supply a year or exact clocks. The extension only uses full detail timestamps and stable vehicle IDs. It prefers the endpoint's absolute epoch boundaries and uses complete local date/time pairs only as a fallback. Invalid JSON or an unsupported schema produces an actionable error instead of guessed dates. The extension does not inspect credentials or bypass sign-in/challenge pages.
 
 Both sources must return nonempty supported data. On success, the worker replaces the saved two-source snapshot and recalculates suggestions. On failure, it leaves the prior saved snapshot unchanged. Check the status message and last-sync timestamp; old results are not evidence of a successful refresh.
 
@@ -82,7 +82,7 @@ This action does not delete portal records or browser cookies. A later explicit 
 
 ## History-only policy and upgrade
 
-Version 0.2.1 starts Turo collection only on trip history and can read reservation details linked there. The worker additionally excludes trips whose end time is in the future, along with invalid intervals; this also excludes in-progress trips. Prefetched upcoming trips cannot qualify through grace periods. Reload the extension and both tabs after upgrading. Old version-1 snapshots are not shown, while valid manual mappings are retained for the next sync.
+Version 0.2.2 starts Turo collection only on trip history and reads the allowlisted JSON details for numeric reservation links discovered there. The worker additionally excludes trips whose end time is in the future, along with invalid intervals; this also excludes in-progress trips. Prefetched upcoming trips cannot qualify through grace periods. Reload the extension and both tabs after upgrading. Old version-1 snapshots are not shown, while valid manual mappings are retained for the next sync.
 
 ## Before relying on a suggestion
 

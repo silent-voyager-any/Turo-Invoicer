@@ -19,11 +19,11 @@ Popup <-- results --- service worker <-- records ------- each source tab
                      chrome.storage.local
 ```
 
-The portal owns authentication. The worker does not recreate authenticated HTTP calls or move credentials across domains. Cross-domain orchestration here means asking the two tab-local collectors for records. During explicit collection, the isolated Turo reader can additionally GET reservation pages linked from loaded history cards using the same-origin browser session.
+The portal owns authentication. The worker does not recreate authenticated HTTP calls or move credentials across domains. Cross-domain orchestration here means asking the two tab-local collectors for records. During explicit collection, the isolated Turo reader can additionally GET a narrowly allowlisted reservation-detail JSON endpoint for numeric links discovered in loaded history cards, using the same-origin browser session.
 
 ## Manifest and loading
 
-The worker is an ES module. Static content scripts start at `document_start`. The network hook runs in MAIN; the common collector, Turo detail helper (Turo only), and source adapter run in ISOLATED, in that order. The manifest targets top-level pages on the three declared origins for SPA lifecycle support. Passive data capture is restricted at runtime to `/us/en/trips/history` and `/ezpass/dashboard/transactions`. Other open pages are not collected; history-linked detail HTML is fetched separately without navigation.
+The worker is an ES module. Static content scripts start at `document_start`. The network hook runs in MAIN; the common collector, Turo detail helper (Turo only), and source adapter run in ISOLATED, in that order. The manifest targets top-level pages on the three declared origins for SPA lifecycle support. Passive data capture is restricted at runtime to `/us/en/trips/history` and `/ezpass/dashboard/transactions`. Other open pages are not collected; history-linked detail JSON is fetched separately without navigation.
 
 DOM observation uses `document`, because `documentElement` may not exist at startup. No offscreen document is needed for these visible-tab reads. No declarative network rules are used because the extension does not redirect, block, or rewrite requests.
 
@@ -39,9 +39,11 @@ DOM capture is a fallback. Turo requires a stable vehicle ID and both times; dis
 
 ### History-linked details
 
-`turo_details.js` discovers `a[data-testid="baseTripCard"][href]` and reservation links inside semantic trip-ID containers. Only exact same-origin `/us/en/reservation/<numeric-id>` pages qualify. It strips queries/fragments and rejects credentials and redirects. Complete captured records for those IDs avoid a GET; otherwise a three-wide pool reads their HTML. A detached template allows inert extraction of JSON script bodies or semantic detail fields. JSON objects must carry the exact linked reservation ID; identity and dates are never joined across unrelated objects. Semantic detail fallback uses the fetched page's ID and rejects mixed-trip containers. Cancelled reservations are omitted; missing or conflicting details fail the batch.
+`turo_details.js` discovers `a[data-testid="baseTripCard"][href]` and reservation links inside semantic trip-ID containers. Only exact same-origin `/us/en/reservation/<numeric-id>` links qualify; link queries/fragments and embedded credentials are ignored or rejected. Complete captured records for those IDs avoid a GET. Otherwise a three-wide pool builds only `GET /api/reservation/detail?oppTermsAware=true&reservationId=<numeric-id>` requests. The final response URL, query keys, content type, size, JSON syntax, and matching reservation identity are validated. Redirects and arbitrary URLs are rejected.
 
-Each collection accumulates discovered IDs to tolerate virtualization. Once linked cards exist, only these reservations are returned; all must resolve before success. No automatic pagination is attempted. Detail jobs start only during `COLLECT_NOW` and are discarded after the last waiter ends. Clear/navigation abort outstanding reads and invalidate late results. Full timestamps and vehicle IDs are required; abbreviated month/day labels and model names are insufficient. This parser is fixture-tested, not authenticated-portal verified.
+The verified response adapter prefers `tripStart.epochMillis` and `tripEnd.epochMillis`, with complete `localDate` plus `localTime` pairs as a defensive fallback. `vehicle.id` supplies the Turo identity and `statusCode` participates in cancellation filtering. Only the reduced reservation ID, vehicle ID, start, and end survive parsing; unrelated response fields are not returned to the worker. Cancelled reservations are omitted, and missing or conflicting details fail the batch.
+
+Each collection accumulates discovered IDs to tolerate virtualization. Once linked cards exist, only these reservations are returned; all must resolve before success. No automatic pagination is attempted. Detail jobs start only during `COLLECT_NOW` and are discarded after the last waiter ends. Clear/navigation abort outstanding reads and invalidate late results. Full timestamps and vehicle IDs are required; abbreviated month/day labels and model names are insufficient. The response shape was inspected in an authenticated browser and is covered by a redacted synthetic fixture; continued portal compatibility is not guaranteed.
 
 ## Portal SPA lifecycle
 
@@ -89,7 +91,7 @@ Updates to settings recalculate the current records without changing the source 
 | JSON traversal | 20,000 queued nodes, maximum depth 8 |
 | Fetch stream | 2,000,000 bytes |
 | History details | 50 discovered IDs per collection, 3 concurrent GETs, 6 seconds per GET, within 20 seconds overall |
-| Detail JSON traversal | 20,000 visited nodes across scripts, maximum depth 12; 2,000,000-byte HTML limit |
+| Detail response | 2,000,000-byte JSON limit; root plus explicit response-envelope candidates only |
 | JSON text/published serialization | 2,000,000 JavaScript characters |
 | Stored scalar strings | At most 250 characters |
 | Mapping entries | 500 per tag map and per plate map |

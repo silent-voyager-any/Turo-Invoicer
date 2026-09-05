@@ -60,8 +60,15 @@ test("E-ZPass rejects posting dates and non-scalar amounts", () => {
 test("Turo adapter keeps epochs, requires vehicle ID, and signals cancellations", () => {
   const { parse } = adapter("content_turo.js");
   assert.equal(parse({ id: "1", startTime: 1782921600, endTime: 1782925200, vehicle: { id: 20 } }).start, 1782921600);
+  const liveShape = parse({
+    reservationId: "2", statusCode: "ENDED", vehicle: { id: 21 },
+    tripStart: { epochMillis: 1787839200000, localDate: "2026-08-27", localTime: "10:00" },
+    tripEnd: { epochMillis: 1788116400000, localDate: "2026-08-30", localTime: "15:00" }
+  });
+  assert.equal(liveShape.start, 1787839200000);
+  assert.equal(liveShape.end, 1788116400000);
   assert.equal(parse({ id: "1", start: "2026-07-01 12:00", end: "2026-07-01 13:00" }), null);
-  assert.equal(parse({ id: "1", status: "CANCELED" })._remove, true);
+  assert.equal(parse({ id: "1", statusCode: "CANCELED" })._remove, true);
 });
 test("DOM dataset fallback extracts toll rows", () => {
   const { document, readDom } = adapter("content_ezpass.js");
@@ -371,12 +378,14 @@ function historyCard(id = "900001") {
   return row;
 }
 const detailRecord = (id = "900001") => ({
-  reservationId: id, vehicle: { id: "800001" },
-  startDateTime: "2026-08-27T10:00:00-04:00", endDateTime: "2026-08-30T15:00:00-04:00"
-});
-const jsonRoot = (...payloads) => ({
-  querySelectorAll: (selector) => selector.startsWith("script")
-    ? payloads.map((payload) => ({ textContent: typeof payload === "string" ? payload : JSON.stringify(payload) })) : []
+  reservationId: id,
+  statusCode: "ENDED",
+  tripStart: { epochMillis: 1787839200000, localDate: "2026-08-27", localTime: "10:00" },
+  tripEnd: { epochMillis: 1788116400000, localDate: "2026-08-30", localTime: "15:00" },
+  vehicle: {
+    id: "800001", make: "Example", model: "Sedan",
+    registration: { licensePlate: "TEST001", state: "NY" }
+  }
 });
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 
@@ -385,21 +394,14 @@ function detailEnvironment(ids = ["900001"]) {
   const cards = ids.map(historyCard);
   env.document.querySelectorAll = () => cards;
   const requested = [];
-  const roots = new Map();
-  env.document.createElement = (tag) => {
-    assert.equal(tag, "template");
-    return { set innerHTML(value) { this.content = roots.get(value) || jsonRoot(); } };
-  };
   env.context.fetch = async (url, options) => {
     requested.push({ url, options });
-    const id = url.split("/").pop();
-    const marker = `synthetic-html-${id}`;
-    roots.set(marker, jsonRoot({ props: { pageProps: { reservation: detailRecord(id) } } }));
-    const response = new Response(marker, { headers: { "content-type": "text/html" } });
+    const id = new URL(url).searchParams.get("reservationId");
+    const response = new Response(JSON.stringify(detailRecord(id)), { headers: { "content-type": "application/json; charset=utf-8" } });
     Object.defineProperty(response, "url", { value: url });
     return response;
   };
-  return { ...env, requested, roots };
+  return { ...env, requested };
 }
 
 test("baseTripCard discovery enriches only its reservation during explicit sync", async () => {
@@ -414,20 +416,31 @@ test("baseTripCard discovery enriches only its reservation during explicit sync"
   assert.equal(env.answers[0].ok, true);
   assert.equal(env.answers[0].records[0].id, "900001");
   assert.equal(env.answers[0].records[0].vehicleId, "800001");
-  assert.equal(env.answers[0].records[0].start, detailRecord().startDateTime);
+  assert.equal(env.answers[0].records[0].start, detailRecord().tripStart.epochMillis);
   assert.equal(env.requested.length, 1);
-  assert.equal(env.requested[0].url, "https://turo.com/us/en/reservation/900001");
+  assert.equal(env.requested[0].url,
+    "https://turo.com/api/reservation/detail?oppTermsAware=true&reservationId=900001");
   assert.equal(env.requested[0].options.credentials, "same-origin");
   assert.equal(env.requested[0].options.redirect, "error");
   assert.equal(env.requested[0].options.method, "GET");
+  assert.equal(env.requested[0].options.headers.Accept, "application/json");
   assert.equal(env.clock.pending(), 0);
 });
 
-test("reservation URL allowlist strips query and rejects off-origin and non-detail targets", () => {
+test("reservation links and generated API URLs are strictly allowlisted", () => {
   const { context } = environment();
-  const { reservationLink } = context.TuroDetails;
-  assert.equal(reservationLink("/us/en/reservation/900001?private=example#info").url,
-    "https://turo.com/us/en/reservation/900001");
+  const { reservationLink, detailUrl, isExpectedDetailUrl } = context.TuroDetails;
+  assert.equal(reservationLink("/us/en/reservation/900001?private=example#info").id, "900001");
+  const expected = "https://turo.com/api/reservation/detail?oppTermsAware=true&reservationId=900001";
+  assert.equal(detailUrl("900001"), expected);
+  assert.equal(detailUrl("900001&unexpected=true"), null);
+  assert.equal(detailUrl("9".repeat(21)), null);
+  assert.equal(isExpectedDetailUrl(expected, "900001"), true);
+  assert.equal(isExpectedDetailUrl(expected + "&unexpected=true", "900001"), false);
+  assert.equal(isExpectedDetailUrl(expected + "#fragment", "900001"), false);
+  assert.equal(isExpectedDetailUrl(expected + "&reservationId=900001", "900001"), false);
+  assert.equal(isExpectedDetailUrl(expected.replace("turo.com", "evil.invalid"), "900001"), false);
+  assert.equal(isExpectedDetailUrl(expected.replace("900001", "900002"), "900001"), false);
   for (const url of ["https://evil.invalid/us/en/reservation/900001", "//www.turo.com/us/en/reservation/900001",
     "/us/en/reservation/900001/cancel", "/us/en/trips/upcoming", "javascript:alert(1)",
     "https://name:password@turo.com/us/en/reservation/900001", "/api/reservations/900001"]) {
@@ -435,25 +448,27 @@ test("reservation URL allowlist strips query and rejects off-origin and non-deta
   }
 });
 
-test("detail parsing requires the linked ID and full clocks, rejecting conflicts and malformed JSON", () => {
+test("detail parsing requires the linked ID and full clocks and strips unrelated fields", () => {
   const env = adapter("content_turo.js");
-  const parse = (root) => env.context.TuroDetails.parseDocument(root, "900001", env.parse, () => {});
-  assert.equal(parse(jsonRoot("not JSON", detailRecord("900002"))), null);
-  assert.equal(parse(jsonRoot({ ...detailRecord(), startDateTime: "Aug 27 - Aug 30" })), null);
-  assert.equal(parse(jsonRoot({ ...detailRecord(), startDateTime: "2026-08-27" })), null);
-  assert.throws(() => parse(jsonRoot(detailRecord(), { ...detailRecord(), vehicle: { id: "other" } })), /conflicting/);
-  assert.equal(parse(jsonRoot({ reservationId: "900001", status: "CANCELED" }))._remove, true);
-  const record = parse(jsonRoot({ ...detailRecord(), guest: "synthetic-private", paymentDetails: {} }));
+  const parse = (payload) => env.context.TuroDetails.parsePayload(payload, "900001", env.parse);
+  assert.equal(parse(detailRecord("900002")), null);
+  assert.equal(parse({ ...detailRecord(), tripStart: { localDate: "Aug 27" } }), null);
+  assert.equal(parse({ ...detailRecord(), tripStart: { localDate: "2026-08-27" } }), null);
+  assert.throws(() => parse({ ...detailRecord(), reservation: { ...detailRecord(), vehicle: { id: "other" } } }), /conflicting/);
+  assert.equal(parse({ reservationId: "900001", statusCode: "CANCELED" })._remove, true);
+  const record = parse({ ...detailRecord(), guest: "synthetic-private", paymentDetails: {} });
   assert.equal(record.guest, undefined);
   assert.equal(record.paymentDetails, undefined);
 });
 
-test("details support semantic HTML without inferring year/time from history labels", () => {
+test("details fall back to complete local date/time fields without using history labels", () => {
   const env = adapter("content_turo.js");
-  const main = completeTrip();
-  main.dataset = { vehicleId: "800001", start: detailRecord().startDateTime, end: detailRecord().endDateTime };
-  const root = { querySelectorAll: (selector) => selector === "main" ? [main] : [] };
-  assert.equal(env.context.TuroDetails.parseDocument(root, "900001", env.parse, env.readDom).id, "900001");
+  const payload = detailRecord();
+  delete payload.tripStart.epochMillis;
+  delete payload.tripEnd.epochMillis;
+  const record = env.context.TuroDetails.parsePayload(payload, "900001", env.parse);
+  assert.equal(record.start, "2026-08-27 10:00");
+  assert.equal(record.end, "2026-08-30 15:00");
   const values = [];
   const card = historyCard();
   env.document.querySelectorAll = () => [card];
@@ -461,13 +476,17 @@ test("details support semantic HTML without inferring year/time from history lab
   assert.deepEqual(values, [null]);
 });
 
-test("an app-shell response fails explicitly instead of guessing trip boundaries", async () => {
+test("malformed or unsupported detail JSON fails without guessing trip boundaries", async () => {
   const env = detailEnvironment();
-  env.document.createElement = () => ({ content: jsonRoot(), set innerHTML(_value) {} });
+  env.context.fetch = async (url) => {
+    const response = new Response("{not-json", { headers: { "content-type": "application/json" } });
+    Object.defineProperty(response, "url", { value: url });
+    return response;
+  };
   env.collect();
   await flush();
   assert.equal(env.answers[0].ok, false);
-  assert.match(env.answers[0].error, /app shell/);
+  assert.match(env.answers[0].error, /malformed JSON/);
   assert.equal(env.clock.pending(), 0);
 });
 
@@ -514,16 +533,20 @@ for (const action of ["clear", "pagehide", "route", "timeout"]) {
   });
 }
 
-test("oversized detail responses and HTTP failures fail the whole collection", async () => {
-  for (const scenario of ["large", "stream", "http", "redirect"]) {
+test("invalid detail responses fail the whole collection", async () => {
+  for (const scenario of ["large", "stream", "http", "redirect", "wrong-url", "wrong-type", "schema"]) {
     const env = detailEnvironment();
     env.context.fetch = async (url) => {
       if (scenario === "redirect") throw new TypeError("fetch failed");
-      const response = new Response(scenario === "stream" ? "x".repeat(2000001) : "synthetic", {
+      const body = scenario === "stream" ? "x".repeat(2000001) :
+        scenario === "schema" ? JSON.stringify({ reservationId: "900001" }) : JSON.stringify(detailRecord());
+      const headers = { "content-type": scenario === "wrong-type" ? "text/html" : "application/json" };
+      if (scenario !== "stream") headers["content-length"] = scenario === "large" ? "2000001" : String(body.length);
+      const response = new Response(body, {
         status: scenario === "http" ? 403 : 200,
-        headers: { "content-type": "text/html", "content-length": scenario === "large" ? "2000001" : "9" }
+        headers
       });
-      Object.defineProperty(response, "url", { value: url });
+      Object.defineProperty(response, "url", { value: scenario === "wrong-url" ? "https://turo.com/api/reservation/detail?reservationId=900001" : url });
       return response;
     };
     env.collect();
