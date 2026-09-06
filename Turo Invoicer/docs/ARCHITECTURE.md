@@ -57,7 +57,7 @@ Each collection accumulates discovered IDs to tolerate virtualization. Once link
 
 Skeletons alone do not satisfy the wait. Structural completeness does not imply valid dates; the reconciler performs timestamp validation later. Settling does not prove complete pagination. E-ZPass uses the same delayed collection. Route changes clear captures and cancel pending waits.
 
-Version 0.4.4 gives explicit E-ZPass syncs a stricter path. After Turo supplies completed-trip coverage, the E-ZPass content script divides that inclusive range into 14-day chunks, hydrates the visible masked date inputs with framework-compatible events, and reads sequential pages. `Lane Txn ID` deduplicates normalized tolls. A collector revision handshake rejects stale injected scripts. The run is complete only when every chunk reaches the verified terminal condition; any rejected date, disabled Search, stalled/repeated page, missing pager, route change, timeout, or cap preserves the prior snapshot.
+Version 0.4.5 gives explicit E-ZPass syncs a stricter path. After Turo supplies completed-trip coverage, the E-ZPass content script divides that inclusive range into 14-day chunks, enters digits through Chromium's focused editing command so the portal mask owns separators and state, and reads sequential pages. `Lane Txn ID` deduplicates normalized tolls. A collector revision handshake rejects stale injected scripts. The run is complete only when every chunk reaches the verified terminal condition; any rejected date, disabled Search, stalled/repeated page, missing pager, route change, timeout, or cap preserves the prior snapshot.
 
 ## Dashboard and fleet state
 

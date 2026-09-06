@@ -159,6 +159,25 @@ test("hydrates masked date inputs with typing events before Search enables", asy
   assert.equal(api.testing.filterSearchButton(fixture.inputs), fixture.searches[0]);
 });
 
+test("uses Chromium editing with digits only and lets the portal mask add separators", async () => {
+  const fixture = filterFixture();
+  const input = fixture.inputs[0];
+  const inserted = [];
+  context.document.execCommand = (command, _showUi, value) => {
+    if (command === "delete") { input.value = ""; return true; }
+    if (command !== "insertText") return false;
+    inserted.push(value);
+    const digits = `${String(input.value).replace(/\D/g, "")}${value}`;
+    input.value = [digits.slice(0, 2), digits.slice(2, 4), digits.slice(4, 6)].filter(Boolean).join("/");
+    return true;
+  };
+  try {
+    await api.testing.commitDateInput(input, "08/01/26");
+    assert.deepEqual(inserted, ["0", "8", "0", "1", "2", "6"]);
+    assert.equal(input.value, "08/01/26");
+  } finally { delete context.document.execCommand; }
+});
+
 test("rejects a date value the portal mask does not accept and emits sanitized diagnostics", async () => {
   const fixture = filterFixture();
   Object.defineProperty(fixture.inputs[0], "value", { configurable: true, get: () => "", set() {} });

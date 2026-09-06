@@ -6,7 +6,7 @@ const PATTERNS = { turo: ["https://turo.com/*"], ezpass: ["https://www.e-zpassny
 const MAX_RECORDS = 5000;
 const HISTORY_PATH = "/us/en/trips/history";
 const TRANSACTIONS_PATH = "/ezpass/dashboard/transactions";
-const EZPASS_COLLECTOR_REVISION = "0.4.4-date-hydration-1";
+const EZPASS_COLLECTOR_REVISION = "0.4.5-masked-digit-entry-1";
 const TRUSTED_PAGES = new Set(["popup.html", "dashboard.html"]);
 const isTransactionsUrl = (url) => {
   try {

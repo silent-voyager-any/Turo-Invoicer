@@ -145,28 +145,58 @@
   }
 
   const normalizedDateDigits = (value) => String(value || "").replace(/\D/g, "");
-  async function commitDateInput(input, value) {
-    const setter = nativeInputSetter(input);
+  const maskedDatePrefix = (digits) => [digits.slice(0, 2), digits.slice(2, 4), digits.slice(4, 6)]
+    .filter(Boolean).join("/");
+
+  async function editDateInput(input, digits) {
+    if (typeof document.execCommand !== "function") return false;
+    input.focus?.();
+    input.select?.();
+    input.setSelectionRange?.(0, String(input.value || "").length);
+    try {
+      document.execCommand("delete", false);
+      for (const digit of digits) {
+        if (!document.execCommand("insertText", false, digit)) return false;
+        await Promise.resolve();
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function clearDateInput(input, setter) {
     input.focus?.();
     input.setSelectionRange?.(0, String(input.value || "").length);
     dispatchInputEvent(input, "beforeinput", { inputType: "deleteContentBackward", data: null });
     setter.call(input, "");
     dispatchInputEvent(input, "input", { inputType: "deleteContentBackward", data: null });
-    let typed = "";
-    for (const character of value) {
-      dispatchInputEvent(input, "keydown", { key: character });
-      dispatchInputEvent(input, "keypress", { key: character });
-      dispatchInputEvent(input, "beforeinput", { inputType: "insertText", data: character });
-      typed += character;
-      setter.call(input, typed);
-      dispatchInputEvent(input, "input", { inputType: "insertText", data: character });
-      dispatchInputEvent(input, "keyup", { key: character });
-      await Promise.resolve();
+  }
+
+  async function commitDateInput(input, value) {
+    const setter = nativeInputSetter(input);
+    const digits = normalizedDateDigits(value);
+    const edited = await editDateInput(input, digits);
+    if (!edited || normalizedDateDigits(input.value) !== digits) {
+      clearDateInput(input, setter);
+      let typedDigits = "";
+      for (const digit of digits) {
+        dispatchInputEvent(input, "keydown", { key: digit, code: `Digit${digit}` });
+        dispatchInputEvent(input, "keypress", { key: digit, code: `Digit${digit}` });
+        dispatchInputEvent(input, "beforeinput", { inputType: "insertText", data: digit });
+        typedDigits += digit;
+        // The mask owns slash insertion. The fallback sets the masked prefix
+        // but announces only the digit as newly typed input.
+        setter.call(input, maskedDatePrefix(typedDigits));
+        dispatchInputEvent(input, "input", { inputType: "insertText", data: digit });
+        dispatchInputEvent(input, "keyup", { key: digit, code: `Digit${digit}` });
+        await Promise.resolve();
+      }
     }
     dispatchInputEvent(input, "change");
     input.blur?.();
     await sleep(0);
-    const accepted = normalizedDateDigits(input.value) === normalizedDateDigits(value) && input.checkValidity?.() !== false;
+    const accepted = normalizedDateDigits(input.value) === digits && input.checkValidity?.() !== false;
     if (!accepted) throw new Error(`E-ZPass rejected a requested date. Diagnostics: ${controlDiagnostics([input])}`);
     return true;
   }
@@ -176,6 +206,7 @@
       type: String(input?.getAttribute?.("type") || input?.type || "text").slice(0, 20),
       format: /mm\/dd\/yy/i.test(input?.getAttribute?.("placeholder") || "") ? "MM/DD/YY" : "unknown",
       accepted: normalizedDateDigits(input?.value).length === 6,
+      digitCount: Math.min(8, normalizedDateDigits(input?.value).length),
       valid: input?.checkValidity?.() !== false
     }));
     const searchState = search ? {
