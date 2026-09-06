@@ -28,6 +28,7 @@
 | Capture limit reached | Narrow the date range, clear captures, reload, and compare counts again. |
 | Conflicting duplicate IDs | Worker saw the same identifier with different content. Clear/reload and verify stable IDs in the adapter. |
 | Mappings conflict | Tag and plate resolve to different vehicles. Correct mappings and consider historical tag transfers. |
+| Time matches, identifier is not mapped | Use **Map to this vehicle**, verify the prefilled tag/plate and effective dates, then save the assignment. |
 | Storage quota or persistence error | Do not assume the sync saved. Narrow the range and consider clearing existing data after preserving anything needed. |
 
 A genuine empty trip/activity range currently cannot be committed as a successful two-source sync: nonempty records are required. Do not interpret this safeguard as proof of scraper failure.
@@ -56,7 +57,9 @@ Apply the date, plate, and tag filters in the portal yourself, then sync. Versio
 
 ### Trips are visible but disabled
 
-Version 0.4.0 intentionally labels the current collectors incomplete because they capture only records loaded by the current portal page. Turo toll-invoice status is also `status_unknown` until its authenticated response contract is verified. Trip cards remain visible under **Trips**, while **Needs review** explains these blockers. This prevents a first-page or unknown-status result from being treated as safe to invoice.
+Version 0.4.1 intentionally labels the current collectors incomplete because they capture only records loaded by the current portal page. Turo toll-invoice status is also `status_unknown` until its authenticated response contract is verified. Confirmed toll matches still appear beneath trips; these blockers prevent selection, not display.
+
+The number after “Turo internal vehicle ID” is Turo's internal car reference, not an E-ZPass tag. Use the discovered vehicle card to confirm its plate and add its complete tag values. Identifier formatting is normalized safely, but leading zeros are not interchangeable.
 
 If rows remain unsupported, provide only the page path, column headings, and numeric diagnostic counts—never account IDs, cookies, tokens, or raw exports. Open the **Fleet dashboard** and add a dated tag or plate assignment for each car; Turo is not assumed to provide E-ZPass tags.
 

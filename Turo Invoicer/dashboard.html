@@ -31,17 +31,17 @@
 
       <section id="vehiclesView" class="view panel">
         <p class="eyebrow">VEHICLES</p><h2>Fleet and dated identifiers</h2>
-        <p class="help">Add one assignment for each plate or E-ZPass tag. Add another vehicle by saving another assignment with a different Turo vehicle ID. Your unfinished entry is saved automatically.</p>
+        <p class="help">Choose a discovered Turo vehicle, then confirm its plate or add one or more E-ZPass tags. The internal Turo ID identifies the car inside Turo; it is never used as an E-ZPass tag.</p>
         <div class="vehicle-layout">
           <form id="assignmentForm">
-            <label>Turo vehicle ID<input id="vehicleId" list="vehicleOptions" maxlength="100" required /></label><datalist id="vehicleOptions"></datalist>
+            <label>Turo vehicle<input id="vehicleId" list="vehicleOptions" maxlength="100" required placeholder="Choose a discovered vehicle" /></label><datalist id="vehicleOptions"></datalist>
             <label>Vehicle label (optional)<input id="vehicleLabel" maxlength="100" placeholder="Example: BMW X1 — black" /></label>
             <label>Identifier type<select id="identifierKind"><option value="tag">E-ZPass tag</option><option value="plate">License plate</option></select></label>
             <label>Tag or plate<input id="identifier" maxlength="100" required placeholder="Leading zeros are preserved" /></label>
             <div class="date-grid"><label>Effective from<input id="validFrom" type="date" /></label><label>Effective through<input id="validTo" type="date" /></label></div>
             <button class="primary" type="submit">Save vehicle assignment</button>
           </form>
-          <div><h3>Configured vehicles</h3><div id="assignmentList" class="stack"></div></div>
+          <div><h3>Discovered and configured vehicles</h3><div id="assignmentList" class="stack"></div></div>
         </div>
       </section>
 
@@ -52,9 +52,12 @@
       </section>
 
       <section id="reviewView" class="view panel" hidden>
-        <p class="eyebrow">NEEDS REVIEW</p><h2>Blocked trips and unmatched tolls</h2>
-        <p class="help">Unknown invoice states, incomplete pagination, missing mappings, time-only suggestions, conflicts, and ambiguous intervals stay here instead of being charged.</p>
-        <div id="reviewList" class="stack"></div>
+        <p class="eyebrow">NEEDS REVIEW</p><h2>Unresolved tolls</h2>
+        <p class="help">Each unresolved toll appears once with its captured tag or plate. A time-only suggestion can prefill a vehicle mapping, but you must confirm and save it.</p>
+        <div id="tollReviewList" class="stack"></div>
+        <h3 class="review-heading">Trip and source blockers</h3>
+        <p class="help">These warnings affect readiness and submission, but they are not counted as unresolved tolls.</p>
+        <div id="tripBlockerList" class="stack"></div>
       </section>
 
       <section id="batchView" class="view panel" hidden>

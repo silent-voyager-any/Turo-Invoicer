@@ -178,6 +178,31 @@ function localDateAt(epochMs, timeZone) {
   return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`;
 }
 
+/**
+ * Canonical form used only for exact identifier comparison. Raw portal and
+ * user-entered values remain unchanged for display and diagnostics.
+ */
+export function canonicalizeIdentifier(kind, value) {
+  if (!["tag", "plate"].includes(kind) || value == null) return null;
+  let text = String(value).normalize("NFKC").trim().toUpperCase();
+  if (kind === "plate") {
+    // Turo commonly prefixes a plate with its jurisdiction (for example
+    // "NY:ABC-123"). Remove only an explicit two-letter prefix so a real
+    // plate beginning with those letters is never shortened by inference.
+    text = text.replace(/^[A-Z]{2}\s*[:|]\s*/, "");
+  }
+  const canonical = text.replace(/[^A-Z0-9]/g, "");
+  return canonical || null;
+}
+
+function mappedVehicles(value, mapping, kind) {
+  const canonical = canonicalizeIdentifier(kind, value);
+  if (!canonical || !mapping || typeof mapping !== "object") return [];
+  return Object.entries(mapping)
+    .filter(([identifier]) => canonicalizeIdentifier(kind, identifier) === canonical)
+    .map(([, vehicleId]) => vehicleId);
+}
+
 function assignmentVehicles(toll, assignments, timeZone) {
   if (!Number.isFinite(toll.timestampMs) || !Array.isArray(assignments)) return [];
   const date = localDateAt(toll.timestampMs, timeZone);
@@ -189,7 +214,8 @@ function assignmentVehicles(toll, assignments, timeZone) {
     const identifiers = assignment.kind === "tag"
       ? [toll.tagId, toll.tagOrPlate]
       : [toll.plate, toll.tagOrPlate];
-    if (identifiers.some((value) => value != null && String(value) === String(assignment.identifier))) {
+    const expected = assignment.canonicalIdentifier || canonicalizeIdentifier(assignment.kind, assignment.identifier);
+    if (expected && identifiers.some((value) => canonicalizeIdentifier(assignment.kind, value) === expected)) {
       vehicles.push(String(assignment.vehicleId));
     }
   }
@@ -288,11 +314,11 @@ export function reconcileTolls(tolls = [], trips = [], options = {}) {
       continue;
     }
 
-    const identities = [toll.vehicleId,
-      toll.tagId && Object.hasOwn(vehicleByTag, toll.tagId) && vehicleByTag[toll.tagId],
-      toll.plate && Object.hasOwn(vehicleByPlate, toll.plate) && vehicleByPlate[toll.plate],
-      toll.tagOrPlate && Object.hasOwn(vehicleByTag, toll.tagOrPlate) && vehicleByTag[toll.tagOrPlate],
-      toll.tagOrPlate && Object.hasOwn(vehicleByPlate, toll.tagOrPlate) && vehicleByPlate[toll.tagOrPlate],
+    const identities = [
+      ...mappedVehicles(toll.tagId, vehicleByTag, "tag"),
+      ...mappedVehicles(toll.plate, vehicleByPlate, "plate"),
+      ...mappedVehicles(toll.tagOrPlate, vehicleByTag, "tag"),
+      ...mappedVehicles(toll.tagOrPlate, vehicleByPlate, "plate"),
       ...assignmentVehicles(toll, vehicleAssignments, timeZone)
     ].filter(Boolean).map(String);
     if (new Set(identities).size > 1) {

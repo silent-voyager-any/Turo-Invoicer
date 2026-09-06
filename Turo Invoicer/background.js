@@ -1,4 +1,4 @@
-import { DEFAULT_TIME_ZONE, reconcileTolls, selectCompletedTrips } from "./reconciler.js";
+import { canonicalizeIdentifier, DEFAULT_TIME_ZONE, reconcileTolls, selectCompletedTrips } from "./reconciler.js";
 import { buildTripWorkspace, selectAllReady, setTollSelection, setTripSelection, summarizeSelection } from "./workspace.js";
 
 const STORAGE_KEY = "turoTollReconcilerState";
@@ -51,7 +51,12 @@ const storageReady = chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED
 async function getState() {
   await storageReady;
   const stored = (await chrome.storage.local.get(STORAGE_KEY))[STORAGE_KEY];
-  if (stored?.version === 4) return reconcile(stored);
+  if (stored?.version === 4) {
+    const changed = hydrateCanonicalAssignments(stored);
+    const state = reconcile(stored);
+    if (changed) await save(state);
+    return state;
+  }
   const fresh = emptyState();
   if (stored?.version === 3) {
     fresh.sources = stored.sources || fresh.sources;
@@ -274,7 +279,22 @@ function cleanAssignment(raw, existingId = null) {
   const validFrom = cleanDate(raw.validFrom, "Start date");
   const validTo = cleanDate(raw.validTo, "End date");
   if (validFrom && validTo && validFrom > validTo) throw new Error("End date cannot precede start date.");
-  return { id: existingId || crypto.randomUUID(), kind, identifier, vehicleId, label, validFrom, validTo };
+  const canonicalIdentifier = canonicalizeIdentifier(kind, identifier);
+  if (!canonicalIdentifier) throw new Error("Tag or plate must contain letters or numbers.");
+  return { id: existingId || crypto.randomUUID(), kind, identifier, canonicalIdentifier, vehicleId, label, validFrom, validTo };
+}
+
+function hydrateCanonicalAssignments(state) {
+  let changed = false;
+  const assignments = Array.isArray(state.fleet?.assignments) ? state.fleet.assignments : [];
+  for (const assignment of assignments) {
+    const canonical = canonicalizeIdentifier(assignment.kind, assignment.identifier);
+    if (assignment.canonicalIdentifier !== canonical) {
+      assignment.canonicalIdentifier = canonical;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 function rangesOverlap(left, right) {
@@ -286,7 +306,10 @@ function assertNoAssignmentOverlap(assignments) {
   for (let index = 0; index < assignments.length; index++) {
     for (let other = index + 1; other < assignments.length; other++) {
       const left = assignments[index], right = assignments[other];
-      if (left.kind === right.kind && left.identifier === right.identifier && rangesOverlap(left, right)) {
+      const sameIdentifier = left.kind === right.kind &&
+        (left.canonicalIdentifier || canonicalizeIdentifier(left.kind, left.identifier)) ===
+        (right.canonicalIdentifier || canonicalizeIdentifier(right.kind, right.identifier));
+      if (sameIdentifier && rangesOverlap(left, right)) {
         throw new Error(`Overlapping ${left.kind} assignments are not allowed.`);
       }
     }
@@ -309,6 +332,12 @@ function rebuildVehicles(state) {
     const current = vehicles.get(assignment.vehicleId) || { vehicleId: assignment.vehicleId, label: "", sourcePlate: null };
     if (assignment.label) current.label = assignment.label;
     vehicles.set(assignment.vehicleId, current);
+  }
+  for (const vehicle of vehicles.values()) {
+    const source = canonicalizeIdentifier("plate", vehicle.sourcePlate);
+    vehicle.sourcePlateConfirmed = Boolean(source && state.fleet.assignments.some((assignment) =>
+      assignment.kind === "plate" && String(assignment.vehicleId) === vehicle.vehicleId &&
+      (assignment.canonicalIdentifier || canonicalizeIdentifier("plate", assignment.identifier)) === source));
   }
   state.fleet.vehicles = [...vehicles.values()];
 }

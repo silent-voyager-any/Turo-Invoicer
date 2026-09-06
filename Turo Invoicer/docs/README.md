@@ -1,6 +1,6 @@
 # Project documentation
 
-This reference describes version 0.4.0, including the trip-centric dashboard, schema-4 drafts and selections, dated vehicle assignments, authenticated same-origin Turo detail reads, completed-trip filtering, and E-ZPass normalization. Last reviewed: September 6, 2026.
+This reference describes version 0.4.1, including vehicle cards, canonical tag/plate matching, the trip-centric dashboard, schema-4 drafts and selections, authenticated same-origin Turo detail reads, completed-trip filtering, and E-ZPass normalization. Last reviewed: September 6, 2026.
 
 ## Reading paths
 

@@ -49,12 +49,13 @@ Vehicle-to-transponder relationships are dated fleet records rather than permane
   "vehicleId": "12345",
   "kind": "tag",
   "identifier": "0012345678",
+  "canonicalIdentifier": "0012345678",
   "validFrom": "2026-01-01",
   "validTo": "2026-12-31"
 }
 ```
 
-`validFrom` and `validTo` are inclusive calendar dates in the configured time zone; an empty bound is open-ended. The worker rejects overlapping assignments for the same identifier and kind when they point to different vehicles. Identifiers and vehicle IDs are compared exactly after trimming. The dashboard autosaves unfinished form values in `uiDrafts` so changing tabs does not erase them.
+`validFrom` and `validTo` are inclusive calendar dates in the configured time zone; an empty bound is open-ended. Raw identifiers are retained for display. Tags compare uppercase alphanumeric canonical values with leading zeros preserved. Plates additionally remove only an explicit two-letter jurisdiction prefix followed by `:` or `|`. Spaces and punctuation are ignored; suffix, partial, numeric, and fuzzy matches are forbidden. Canonically equal overlapping assignments of the same kind are rejected. The dashboard autosaves unfinished form values in `uiDrafts` so changing tabs does not erase them.
 
 ## Pure API
 
@@ -101,7 +102,7 @@ The worker first calls `selectCompletedTrips(trips, { timeZone, nowMs })`, retur
 For each toll:
 
 1. Reject an invalid timestamp or nonpositive/invalid amount into review.
-2. Resolve vehicle identity from direct canonical `vehicleId`, active dated tag/plate assignments, and legacy direct mappings when supplied by an external caller.
+2. Resolve vehicle identity only from active dated tag/plate assignments and legacy mapping objects when supplied by an external caller. An E-ZPass `vehicleId` is never treated as a Turo vehicle ID.
 3. If multiple supplied identities disagree, report a mapping conflict.
 4. Select valid loaded trips whose intervals contain the toll, including grace on both ends; if identity is known, require the same vehicle ID.
 5. One candidate becomes a suggestion; multiple candidates are ambiguous; zero candidates are unmatched.

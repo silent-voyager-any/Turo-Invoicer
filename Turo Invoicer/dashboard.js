@@ -1,7 +1,7 @@
 const ids = [
   "syncButton", "clearButton", "graceMinutes", "status", "statusDot", "tripCount", "tollCount", "draftCount", "selectedTotal",
   "turoCompleteness", "ezpassCompleteness", "lastSync", "assignmentForm", "vehicleId", "vehicleLabel", "identifierKind", "identifier",
-  "validFrom", "validTo", "vehicleOptions", "assignmentList", "tripsList", "reviewList", "batchList", "selectAllButton", "prepareButton",
+  "validFrom", "validTo", "vehicleOptions", "assignmentList", "tripsList", "tollReviewList", "tripBlockerList", "batchList", "selectAllButton", "prepareButton",
   "batchTrips", "batchTolls", "batchTotal", "navReviewCount", "navBatchCount", "navVehicles", "navTrips", "navReview", "navBatch",
   "vehiclesView", "tripsView", "reviewView", "batchView"
 ];
@@ -68,8 +68,31 @@ function removeButton(id) {
 }
 function assignmentCard(assignment) {
   const card = element("article", "card"); const row = element("div", "card-row");
-  row.append(element("strong", "", `${assignment.label || `Vehicle ${assignment.vehicleId}`} · ${assignment.kind} ${assignment.identifier}`), removeButton(assignment.id));
-  card.append(row, element("p", "", `${assignment.validFrom || "Any past date"} through ${assignment.validTo || "Any future date"} · Turo vehicle ${assignment.vehicleId}`));
+  row.append(element("strong", "", `${assignment.kind === "tag" ? "E-ZPass tag" : "Plate"} ${assignment.identifier}`), removeButton(assignment.id));
+  card.append(row, element("p", "", `${assignment.validFrom || "Any past date"} through ${assignment.validTo || "Any future date"}`));
+  return card;
+}
+function prefillButton(label, vehicle, kind, value) {
+  const button = element("button", "secondary mapping-button", label); button.type = "button";
+  button.dataset.mapVehicleId = vehicle.vehicleId; button.dataset.mapVehicleLabel = vehicle.label || "";
+  button.dataset.mapKind = kind; button.dataset.mapIdentifier = value; return button;
+}
+function vehicleCard(vehicle, assignments) {
+  const card = element("article", "card vehicle-card"); const heading = element("div", "card-row");
+  heading.append(element("strong", "", vehicle.label || "Unnamed Turo vehicle"),
+    assignments.length ? element("span", "pill ready", "Configured") : element("span", "pill warning", "Mapping needed"));
+  card.append(heading);
+  if (vehicle.sourcePlate) {
+    const plate = element("div", "source-plate");
+    plate.append(element("span", "", `Turo registration: ${vehicle.sourcePlate}`));
+    if (!vehicle.sourcePlateConfirmed) plate.append(prefillButton("Confirm this plate", vehicle, "plate", vehicle.sourcePlate));
+    card.append(plate);
+  }
+  card.append(element("p", "internal-id", `Turo internal vehicle ID: ${vehicle.vehicleId} — not an E-ZPass tag`));
+  const list = element("div", "assignment-items");
+  list.append(...assignments.map(assignmentCard));
+  if (!assignments.length) list.append(element("p", "muted", "No confirmed plate or tag assignments."));
+  card.append(list, prefillButton("Add E-ZPass tag", vehicle, "tag", ""));
   return card;
 }
 function collectionLabel(source, run) {
@@ -86,7 +109,8 @@ function tripCard(draft, state) {
   const vehicle = (state.fleet?.vehicles || []).find((item) => String(item.vehicleId) === String(draft.vehicleId));
   const card = element("article", `card trip-card${draft.selectable ? "" : " blocked"}${draft.selected ? " selected" : ""}`);
   const heading = element("div", "trip-heading"); const title = element("div", "trip-title");
-  title.append(checkbox("trip", draft.reservationId, draft.selected, !draft.selectable), element("strong", "", `${vehicle?.label || `Vehicle ${draft.vehicleId}`} · Trip ${draft.reservationId}`));
+  const vehicleTitle = [vehicle?.label || "Unnamed Turo vehicle", vehicle?.sourcePlate].filter(Boolean).join(" · ");
+  title.append(checkbox("trip", draft.reservationId, draft.selected, !draft.selectable), element("strong", "", `${vehicleTitle} · Trip ${draft.reservationId}`));
   heading.append(title, element("span", `pill ${draft.selectable ? "ready" : "warning"}`, draft.selectable ? "Ready for evidence" : reasonLabel(draft.eligibility)));
   const dates = element("p", "", `${formatTime(draft.startMs, zone)} — ${formatTime(draft.endMs, zone)}`);
   const tolls = element("div", "tolls");
@@ -97,11 +121,26 @@ function tripCard(draft, state) {
     row.append(element("span", "muted", `${identifier(toll)}${toll.withinGrace ? " · grace" : ""}`)); tolls.append(row);
   }
   if (!draft.tolls?.length) tolls.append(element("p", "muted", "No uniquely matched tolls found."));
-  card.append(heading, dates, tolls, element("p", "", `${draft.selectedTollIds.length} selected · ${moneyCents(draft.totalCents)}`));
+  card.append(heading, element("p", "internal-id", `Turo internal vehicle ID: ${draft.vehicleId} — not an E-ZPass tag`), dates, tolls, element("p", "", `${draft.selectedTollIds.length} selected · ${moneyCents(draft.totalCents)}`));
   if (draft.blockingReasons?.length) card.append(element("p", "muted", draft.blockingReasons.map(reasonLabel).join(" · ")));
   return card;
 }
-function reviewCard(title, detail) { const card = element("article", "card"); card.append(element("strong", "", title), element("p", "", detail)); return card; }
+function reviewCard(title, detail, actions = []) {
+  const card = element("article", "card"); card.append(element("strong", "", title), element("p", "", detail));
+  if (actions.length) { const row = element("div", "review-actions"); row.append(...actions); card.append(row); }
+  return card;
+}
+function mappingActions(toll, trip, state) {
+  const vehicle = (state.fleet?.vehicles || []).find((item) => String(item.vehicleId) === String(trip.vehicleId)) ||
+    { vehicleId: String(trip.vehicleId), label: "" };
+  const values = [];
+  if (toll.tagId) values.push(["tag", toll.tagId]);
+  if (toll.plate) values.push(["plate", toll.plate]);
+  if (!values.length && toll.tagOrPlate) values.push(["tag", toll.tagOrPlate], ["plate", toll.tagOrPlate]);
+  return values.map(([kind, value]) => prefillButton(
+    values.length > 1 ? `Use as ${kind}` : `Map to ${vehicle.label || "this vehicle"}`, vehicle, kind, value
+  ));
+}
 
 function render(state, { restore = false } = {}) {
   const trips = state.sources?.turo?.records || [], tolls = state.sources?.ezpass?.records || [], drafts = state.invoiceDrafts || [];
@@ -114,15 +153,27 @@ function render(state, { restore = false } = {}) {
     const run = state.collectionRuns?.[source]; target.textContent = collectionLabel(source, run); target.className = run?.complete ? "complete" : "incomplete";
   }
   el.vehicleOptions.replaceChildren(...(state.fleet?.vehicles || []).map((vehicle) => { const option = document.createElement("option"); option.value = vehicle.vehicleId; option.label = [vehicle.label || vehicle.vehicleId, vehicle.sourcePlate].filter(Boolean).join(" · "); return option; }));
-  fill(el.assignmentList, (state.fleet?.assignments || []).map(assignmentCard), "No vehicle assignments yet.");
+  fill(el.assignmentList, (state.fleet?.vehicles || []).map((vehicle) => vehicleCard(vehicle,
+    (state.fleet?.assignments || []).filter((assignment) => String(assignment.vehicleId) === String(vehicle.vehicleId)))), "Sync Turo history to discover vehicles.");
   fill(el.tripsList, drafts.map((draft) => tripCard(draft, state)), "No completed trips loaded yet.");
 
-  const review = [];
-  for (const draft of drafts.filter((item) => !item.selectable)) review.push(reviewCard(`Trip ${draft.reservationId} · vehicle ${draft.vehicleId}`, draft.blockingReasons.map(reasonLabel).join(" · ")));
-  for (const { toll, reason } of state.reconciliation?.unmatchedTolls || []) review.push(reviewCard(`${moneyCents(toll.amountCents)} · ${toll.plaza}`, `${formatTime(toll.timestampMs, state.settings?.timeZone)} · ${reasonLabel(reason)}`));
-  for (const match of (state.reconciliation?.matched || []).filter((item) => !item.vehicleConfirmed)) review.push(reviewCard(`${moneyCents(match.toll.amountCents)} · ${match.toll.plaza}`, "Time-only suggestion · configure the matching tag or plate before invoicing"));
-  for (const { toll, candidates } of state.reconciliation?.ambiguous || []) review.push(reviewCard(`${moneyCents(toll.amountCents)} · ${toll.plaza}`, `Overlaps ${candidates.length} trips`));
-  fill(el.reviewList, review, "Nothing needs review."); el.navReviewCount.textContent = review.length;
+  const tripBlockers = drafts.filter((item) => !item.selectable).map((draft) => {
+    const vehicle = (state.fleet?.vehicles || []).find((item) => String(item.vehicleId) === String(draft.vehicleId));
+    return reviewCard(`Trip ${draft.reservationId} · ${vehicle?.label || "Turo vehicle"}`, draft.blockingReasons.map(reasonLabel).join(" · "));
+  });
+  fill(el.tripBlockerList, tripBlockers, "No trip or source blockers.");
+  const tollReview = new Map();
+  const addIssue = (toll, detail, actions = []) => {
+    const key = toll.id || JSON.stringify([toll.timestampMs, toll.plaza, toll.amountCents, identifier(toll)]);
+    if (!tollReview.has(key)) tollReview.set(key, reviewCard(`${moneyCents(toll.amountCents)} · ${toll.plaza}`,
+      `${identifier(toll)} · ${formatTime(toll.timestampMs, state.settings?.timeZone)} · ${detail}`, actions));
+  };
+  for (const { toll, reason } of state.reconciliation?.unmatchedTolls || []) addIssue(toll, reasonLabel(reason));
+  for (const match of (state.reconciliation?.matched || []).filter((item) => !item.vehicleConfirmed)) {
+    addIssue(match.toll, "Time matches one trip, but this identifier is not mapped to its vehicle", mappingActions(match.toll, match.trip, state));
+  }
+  for (const { toll, candidates } of state.reconciliation?.ambiguous || []) addIssue(toll, `Overlaps ${candidates.length} trips`);
+  fill(el.tollReviewList, [...tollReview.values()], "No unresolved tolls."); el.navReviewCount.textContent = tollReview.size;
   fill(el.batchList, drafts.filter((draft) => draft.selected).map((draft) => reviewCard(`Trip ${draft.reservationId}`, `${draft.selectedTollIds.length} tolls · ${moneyCents(draft.totalCents)}`)), "No trips selected.");
   el.prepareButton.disabled = summary.tripCount === 0;
   if (restore) restoreDraft(state.uiDrafts?.vehicleAssignment);
@@ -131,7 +182,22 @@ function scheduleDraftSave() { clearTimeout(draftTimer); draftTimer = setTimeout
 for (const input of [el.vehicleId, el.vehicleLabel, el.identifierKind, el.identifier, el.validFrom, el.validTo]) input.addEventListener("input", scheduleDraftSave);
 for (const [name, nav] of Object.entries(navs)) nav.addEventListener("click", () => showView(name));
 el.assignmentForm.addEventListener("submit", async (event) => { event.preventDefault(); clearTimeout(draftTimer); try { const { state } = await send({ type: "UPSERT_ASSIGNMENT", assignment: draftValue() }); render(state); restoreDraft({}); showView("vehicles"); setStatus("Vehicle assignment saved; trip matches recalculated."); } catch (error) { setStatus(error.message, "error"); } });
-el.assignmentList.addEventListener("click", async (event) => { const id = event.target?.dataset?.assignmentId; if (!id) return; try { const { state } = await send({ type: "DELETE_ASSIGNMENT", id }); render(state); setStatus("Assignment removed."); } catch (error) { setStatus(error.message, "error"); } });
+async function handleMappingPrefill(event) {
+  const data = event.target?.dataset || {};
+  if (!data.mapVehicleId) return false;
+  const draft = { vehicleId: data.mapVehicleId, label: data.mapVehicleLabel || "", kind: data.mapKind || "tag", identifier: data.mapIdentifier || "", validFrom: "", validTo: "" };
+  restoreDraft(draft); showView("vehicles");
+  try { await send({ type: "SAVE_UI_DRAFT", draft }); setStatus("Mapping prefilled. Review the identifier and dates, then save it."); }
+  catch (error) { setStatus(error.message, "error"); }
+  return true;
+}
+el.assignmentList.addEventListener("click", async (event) => {
+  if (await handleMappingPrefill(event)) return;
+  const id = event.target?.dataset?.assignmentId; if (!id) return;
+  try { const { state } = await send({ type: "DELETE_ASSIGNMENT", id }); render(state); setStatus("Assignment removed."); }
+  catch (error) { setStatus(error.message, "error"); }
+});
+el.tollReviewList.addEventListener("click", handleMappingPrefill);
 el.tripsList.addEventListener("change", async (event) => { const action = event.target?.dataset?.action; if (!action) return; try { const message = action === "trip" ? { type: "SET_TRIP_SELECTION", reservationId: event.target.dataset.reservationId, selected: event.target.checked } : { type: "SET_TOLL_SELECTION", reservationId: event.target.dataset.reservationId, tollId: event.target.dataset.tollId, selected: event.target.checked }; const { state } = await send(message); render(state); } catch (error) { setStatus(error.message, "error"); } });
 el.selectAllButton.addEventListener("click", async () => { try { const { state } = await send({ type: "SELECT_ALL_READY", selected: true }); render(state); setStatus("All ready trips selected."); } catch (error) { setStatus(error.message, "error"); } });
 el.graceMinutes.addEventListener("change", async () => { try { const { state } = await send({ type: "UPDATE_SETTINGS", settings: { graceMinutes: Number(el.graceMinutes.value) } }); render(state); setStatus("Grace period updated; selections were revalidated."); } catch (error) { setStatus(error.message, "error"); } });

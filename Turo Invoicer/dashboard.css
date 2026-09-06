@@ -35,6 +35,11 @@ input, select, #selectAllButton { min-height: 39px; padding: 0 10px; border: 1px
 .tolls { display: grid; gap: 6px; margin-top: 12px; } .toll-row { padding: 9px 10px; border-radius: 8px; background: #f0f4f1; font-size: 12px; }
 .toll-main { display: flex; align-items: center; gap: 9px; } .muted { color: #738078; font-size: 11px; }
 .danger { border: 0; background: transparent; color: #a13c3c; cursor: pointer; }
+.secondary { min-height: 32px; padding: 0 10px; border: 1px solid #afc8bb; border-radius: 7px; background: #fff; color: #176b4b; cursor: pointer; }
+.vehicle-card { display: grid; gap: 9px; } .source-plate, .review-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.assignment-items { display: grid; gap: 6px; } .assignment-items .card { padding: 9px; background: #f3f6f4; }
+.internal-id { color: #7a8580 !important; font-size: 10px !important; }
+.review-heading { margin-top: 24px; }
 .batch-summary { display: flex; gap: 10px; margin: 16px 0; } .batch-summary strong { padding: 9px 12px; border-radius: 9px; background: #eef3ef; }
 .batch-action { margin-top: 18px; } .safety { padding: 12px; border: 1px solid #ead6ae; border-radius: 9px; background: #fff8e9; }
 footer { justify-content: flex-end; margin-top: 20px; } .text-button { border: 0; background: transparent; color: #65716b; text-decoration: underline; cursor: pointer; }

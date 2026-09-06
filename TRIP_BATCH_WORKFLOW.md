@@ -1,6 +1,6 @@
 # Trip-centric toll reconciliation and batch workflow
 
-Last reviewed: September 6, 2026. Version 0.4.0 implements the schema-4 trip workspace, nested confirmed tolls, four dashboard pages, and persistent selection. Complete pagination, verified Turo invoice status, evidence, and submission remain required behavior rather than completed capabilities.
+Last reviewed: September 6, 2026. Version 0.4.1 implements the schema-4 trip workspace, vehicle cards, canonical tag/plate mapping, nested confirmed tolls, four dashboard pages, and persistent selection. Complete pagination, verified Turo invoice status, evidence, and submission remain required behavior rather than completed capabilities.
 
 ## Goal
 
@@ -12,8 +12,8 @@ Turn the dashboard into a fleet-first workspace that finds every completed, reim
 
 - Turo collection reads only history cards currently loaded in the page and rejects more than 50 discovered reservations. It does not paginate the complete history.
 - E-ZPass collection reads only transaction records already loaded by the current page/API responses. It does not request every result page.
-- The dashboard renders toll-oriented `Matched` and `Needs review` lists. It has no trip cards, toll checkboxes, trip selection, invoice-status filtering, or batch action.
-- A toll becomes vehicle-confirmed only when its captured tag or plate resolves to the exact Turo vehicle ID through a dated fleet assignment. Missing or conflicting assignments leave it unmatched.
+- The dashboard has trip cards and selection, but evidence and submission remain blocked until complete portal collectors and invoice-state verification exist.
+- A toll becomes vehicle-confirmed only when its captured tag or plate resolves through a dated fleet assignment to the trip's Turo vehicle ID. Raw identifiers remain visible; exact canonical comparison ignores formatting while preserving leading zeros.
 - The Turo adapter currently knows trip times and vehicle ID, but it does not yet determine whether a toll reimbursement invoice already exists.
 
 ## Required user workflow

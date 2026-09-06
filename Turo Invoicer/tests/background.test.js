@@ -10,7 +10,7 @@ let accessLevel;
 let turoUrl = "https://turo.com/us/en/trips/history";
 let ezpassUrl = "https://www.e-zpassny.com/ezpass/dashboard/transactions";
 const portalResponses = {
-  1: { ok: true, source: "turo", pagePath: "/us/en/trips/history", records: [{ id: "trip1", vehicleId: "car1", start: "2026-07-01 09:00", end: "2026-07-01 18:00", guestName: "Synthetic private field" }] },
+  1: { ok: true, source: "turo", pagePath: "/us/en/trips/history", records: [{ id: "trip1", vehicleId: "car1", start: "2026-07-01 09:00", end: "2026-07-01 18:00", vehicleLabel: "Example car", vehiclePlate: "NY:ABC-123", guestName: "Synthetic private field" }] },
   2: { ok: true, source: "ezpass", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, accountNumber: "Synthetic private field" }] }
 };
 globalThis.chrome = {
@@ -144,13 +144,27 @@ test("dashboard drafts persist and dated assignments reject overlapping ownershi
     vehicleId: "car1", kind: "tag", identifier: "002", label: "Car one", validFrom: "2026-01-01", validTo: "2026-06-30"
   } }, dashboardSender);
   assert.equal(result.ok, true);
+  assert.equal(result.state.fleet.assignments.find((assignment) => assignment.identifier === "002").canonicalIdentifier, "002");
   assert.equal(result.state.uiDrafts.vehicleAssignment.vehicleId, undefined);
   assert.equal(result.state.fleet.vehicles.find((vehicle) => vehicle.vehicleId === "car1").label, "Car one");
   const overlap = await call({ type: "UPSERT_ASSIGNMENT", assignment: {
-    vehicleId: "car2", kind: "tag", identifier: "002", validFrom: "2026-06-01", validTo: "2026-12-31"
+    vehicleId: "car2", kind: "tag", identifier: "0-0-2", validFrom: "2026-06-01", validTo: "2026-12-31"
   } }, dashboardSender);
   assert.equal(overlap.ok, false);
   assert.match(overlap.error, /Overlapping tag/);
+});
+test("schema-4 assignments hydrate canonical values without clearing fleet data", async () => {
+  stored.turoTollReconcilerState = {
+    version: 4,
+    sources: { turo: { records: portalResponses[1].records }, ezpass: { records: [] } },
+    settings: { timeZone: "America/New_York", graceMinutes: 0 },
+    fleet: { vehicles: [], assignments: [{ id: "plate1", kind: "plate", identifier: "NY:ABC-123", vehicleId: "car1", label: "", validFrom: null, validTo: null }] },
+    uiDrafts: { vehicleAssignment: {} }, collectionRuns: {}, tripEligibility: {}, invoiceDrafts: [], evidence: [], submissionLedger: []
+  };
+  const { state } = await call({ type: "GET_STATE" });
+  assert.equal(state.fleet.assignments[0].canonicalIdentifier, "ABC123");
+  assert.equal(state.fleet.vehicles[0].sourcePlateConfirmed, true);
+  assert.equal(stored.turoTollReconcilerState.fleet.assignments[0].canonicalIdentifier, "ABC123");
 });
 test("schema-3 state migrates without treating its loaded page as complete", async () => {
   stored.turoTollReconcilerState = {

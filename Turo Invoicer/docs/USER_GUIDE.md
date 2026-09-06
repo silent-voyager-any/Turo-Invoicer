@@ -41,9 +41,9 @@ A successful sync means supported loaded records were collected—not that every
 
 ## Fleet assignments
 
-In the dashboard, enter a Turo vehicle ID, optional host-facing label, identifier type, and exact E-ZPass tag or plate. Add inclusive effective dates when a tag or plate changes vehicles; leave a boundary empty for an open-ended range. Leading zeros are preserved. Overlapping date ranges for the same identifier are rejected.
+The dashboard builds one card per discovered Turo vehicle. The vehicle name and current registration plate are shown prominently; the numeric Turo internal ID appears only as a diagnostic and is not an E-ZPass tag. Confirm the suggested plate or add one or more E-ZPass tags. Add inclusive effective dates when an identifier changes vehicles; leave a boundary empty for an open-ended range.
 
-Turo is not assumed to provide E-ZPass tag numbers. Copy them from your own E-ZPass records. The vehicle value must be the exact Turo vehicle ID, not a vehicle name or E-ZPass internal vehicle ID. The identifier must match the captured tag or plate exactly, including leading zeros, case, and state formatting when supplied.
+Turo is not assumed to provide E-ZPass tag numbers. Copy complete values from your own E-ZPass records. Leading zeros remain significant, while letter case, spaces, punctuation, and an explicit `NY:`-style plate prefix do not affect comparison. Partial and fuzzy matches are never used.
 
 Click **Save assignment** to persist it and recalculate the existing snapshot without reloading the portals. A combined Tag/Plate value is resolved through dated assignments only when the resulting vehicle is unique.
 
@@ -54,7 +54,7 @@ Create separate non-overlapping dated assignments when a tag belonged to differe
 | Dashboard result | Meaning | Your next action |
 | --- | --- | --- |
 | Match suggestion | Exactly one loaded trip qualifies | Verify toll, trip, and completeness manually |
-| Confirm vehicle | Match used time only, without resolved vehicle identity | Establish the correct tag/plate mapping |
+| Confirm vehicle | Time matches one trip, but the captured identifier is not mapped | Use the review shortcut, verify the prefilled car/identifier/dates, then save |
 | Grace period | Toll is outside the exact trip but inside the expanded interval | Verify why it should belong to this trip |
 | Overlaps multiple trips | Several trips qualify | Resolve identity or inspect trip boundaries |
 | No trip in range | No loaded trip qualifies, possibly after vehicle filtering | Check missing trips, times, mapping, and date range |
@@ -73,7 +73,7 @@ This action does not delete portal records or browser cookies. A later explicit 
 
 ## History-only policy and upgrade
 
-Version 0.4.0 groups uniquely vehicle-confirmed tolls beneath individual completed-trip drafts and persists toll/trip selection. Until complete pagination and Turo invoice-status adapters are verified, the dashboard marks loaded sources incomplete and trips `status_unknown`; these records are visible but cannot enter a batch. Reload the extension and both tabs after upgrading.
+Version 0.4.1 groups uniquely vehicle-confirmed tolls beneath completed-trip drafts and shows every unresolved toll once under **Needs review**. Trip/source blockers are listed separately and do not inflate the unresolved-toll count. Until complete pagination and Turo invoice-status adapters are verified, records remain visible but cannot enter a batch. Reload the extension and both tabs after upgrading.
 
 ## Before relying on a suggestion
 

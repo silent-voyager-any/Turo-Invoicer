@@ -4,7 +4,7 @@ A local-first Chrome extension that helps Turo hosts reconcile NY E-ZPass toll a
 
 The extension observes data loaded in your signed-in browser tabs, matches toll timestamps to trip intervals, and presents suggestions for review. It does not require a server, store portal passwords, or submit reimbursement claims.
 
-> **Status: development scaffold, version 0.4.0.** The dashboard now groups confirmed toll matches beneath individual completed trips and provides persistent toll/trip selection. Complete pagination, Turo invoice-status verification, evidence capture, and invoice submission remain safety-gated milestones.
+> **Status: development scaffold, version 0.4.1.** The dashboard groups confirmed toll matches beneath completed trips, distinguishes Turo vehicle IDs from toll identifiers, and provides persistent toll/trip selection. Complete pagination, Turo invoice-status verification, evidence capture, and invoice submission remain safety-gated milestones.
 
 ## Features
 
@@ -19,9 +19,9 @@ The extension observes data loaded in your signed-in browser tabs, matches toll 
 - Local snapshots, atomic two-source sync, and a clear-data control.
 - No backend uploads, analytics, remote scripts, or automatic claim submission.
 
-## Version 0.4.0 update
+## Version 0.4.1 update
 
-The dashboard now has Vehicles, Trips, Needs review, and Batch pages. Every completed Turo record becomes one trip draft; uniquely time-and-vehicle-confirmed tolls appear under that trip with persistent toll and trip selections and integer-cent totals. Schema 4 preserves existing fleet data while marking legacy/current-page collections incomplete and unknown Turo invoice states unselectable. See [TRIP_BATCH_WORKFLOW.md](TRIP_BATCH_WORKFLOW.md) for the remaining authenticated adapter, evidence, and submission work.
+Vehicle cards now show the discovered name and registration plate while labeling the numeric Turo vehicle ID as an internal reference, never an E-ZPass tag. Confirmed tags and plates compare exact canonical forms: formatting separators and an explicit plate-state prefix are ignored, but leading zeros remain significant. Needs review shows each unresolved toll once and can prefill—never silently save—a mapping for its time-matched vehicle. Schema 4 data migrates without clearing fleet assignments.
 
 The version 0.2.3 E-ZPass behavior remains in place:
 

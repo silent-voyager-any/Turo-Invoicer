@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { toEpochMs, normalizeAmount, reconcileTolls, selectCompletedTrips } from "../reconciler.js";
+import { canonicalizeIdentifier, toEpochMs, normalizeAmount, reconcileTolls, selectCompletedTrips } from "../reconciler.js";
 
 const trip = { id: "trip-1", vehicleId: "car-1", start: "2026-07-01 09:00", end: "2026-07-01 18:00" };
 const toll = { id: "toll-1", timestamp: "2026-07-01 12:00", plaza: "Queens Midtown", amount: "$6.94" };
@@ -92,6 +92,23 @@ test("mixed tag/plate identifiers resolve only through explicit, nonconflicting 
   assert.equal(reconcileTolls([mixed], [trip], { vehicleByTag: { "000123": "car-1" } }).matched[0].vehicleConfirmed, true);
   assert.equal(reconcileTolls([mixed], [trip], { vehicleByPlate: { "000123": "car-1" } }).matched[0].vehicleConfirmed, true);
   assert.equal(reconcileTolls([mixed], [trip], { vehicleByTag: { "000123": "car-1" }, vehicleByPlate: { "000123": "car-2" } }).unmatchedTolls[0].reason, "conflicting_vehicle_mapping");
+});
+test("canonical identifiers match formatting without weakening exact identity", () => {
+  assert.equal(canonicalizeIdentifier("plate", "NY: abc-123"), "ABC123");
+  assert.equal(canonicalizeIdentifier("plate", "NYABC123"), "NYABC123");
+  assert.equal(canonicalizeIdentifier("tag", "00-12 34"), "001234");
+  assert.notEqual(canonicalizeIdentifier("tag", "001234"), canonicalizeIdentifier("tag", "1234"));
+  assert.equal(canonicalizeIdentifier("tag", "---"), null);
+
+  const formatted = { ...toll, plate: "abc 123" };
+  const result = reconcileTolls([formatted], [trip], {
+    vehicleAssignments: [{ kind: "plate", identifier: "NY:ABC-123", vehicleId: "car-1" }]
+  });
+  assert.equal(result.matched[0].vehicleConfirmed, true);
+});
+test("Turo internal IDs are never inferred from E-ZPass identifiers", () => {
+  const result = reconcileTolls([{ ...toll, tagOrPlate: "car-1", vehicleId: "car-1" }], [trip]);
+  assert.equal(result.matched[0].vehicleConfirmed, false);
 });
 test("dated fleet assignments resolve only inside their inclusive local-date range", () => {
   const second = { ...trip, id: "trip-2", vehicleId: "car-2" };

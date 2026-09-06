@@ -16,7 +16,7 @@ async function dashboard() {
   const document = { querySelector(selector) { if (!elements.has(selector)) elements.set(selector, node()); return elements.get(selector); }, createElement: node };
   let state = {
     version: 4, sources: { turo: { records: [{ id: "trip", vehicleId: "car1" }] }, ezpass: { records: [{ id: "toll" }] } },
-    settings: { timeZone: "America/New_York", graceMinutes: 0 }, fleet: { vehicles: [{ vehicleId: "car1", label: "Car one" }], assignments: [] },
+    settings: { timeZone: "America/New_York", graceMinutes: 0 }, fleet: { vehicles: [{ vehicleId: "car1", label: "Car one", sourcePlate: "NY:ABC-123", sourcePlateConfirmed: false }], assignments: [] },
     uiDrafts: { vehicleAssignment: { vehicleId: "car1", label: "Car one", kind: "tag", identifier: "001" } },
     collectionRuns: { turo: { complete: true, pageCount: 2, recordCount: 1 }, ezpass: { complete: true, pageCount: 3, recordCount: 1 } },
     invoiceDrafts: [{
@@ -24,7 +24,10 @@ async function dashboard() {
       eligibility: "eligible_uncharged", tolls: [{ id: "toll", timestampMs: Date.parse("2026-01-01T16:00:00Z"), plaza: "Example", amountCents: 425, tagId: "001" }],
       selectedTollIds: ["toll"], selected: false, selectable: true, blockingReasons: [], totalCents: 425
     }],
-    selectionSummary: { tripCount: 0, tollCount: 0, totalCents: 0 }, reconciliation: { matched: [], unmatchedTolls: [], ambiguous: [] }, lastSync: null
+    selectionSummary: { tripCount: 0, tollCount: 0, totalCents: 0 }, reconciliation: { matched: [{
+      toll: { id: "review-toll", timestampMs: Date.parse("2026-01-01T16:00:00Z"), plaza: "Example", amountCents: 425, tagOrPlate: "000123" },
+      trip: { id: "trip", vehicleId: "car1" }, vehicleConfirmed: false
+    }], unmatchedTolls: [], ambiguous: [] }, lastSync: null
   };
   const messages = [];
   const chrome = { runtime: { sendMessage: async (message) => {
@@ -72,4 +75,31 @@ test("dashboard exposes vehicles, trips, review and batch pages", async () => {
   env.elements.get("#navTrips").listeners.click();
   assert.equal(env.elements.get("#tripsView").hidden, false);
   assert.equal(env.elements.get("#vehiclesView").hidden, true);
+});
+
+function descendants(node) {
+  return [node, ...(node?.children || []).flatMap(descendants)];
+}
+
+test("vehicle cards distinguish Turo IDs and prefill discovered plates without saving", async () => {
+  const env = await dashboard();
+  const text = descendants(env.elements.get("#assignmentList")).map((item) => item.textContent).join(" ");
+  assert.match(text, /Turo internal vehicle ID: car1 — not an E-ZPass tag/);
+  const button = descendants(env.elements.get("#assignmentList")).find((item) => item.dataset.mapKind === "plate");
+  await env.elements.get("#assignmentList").listeners.click({ target: button });
+  assert.equal(env.elements.get("#identifier").value, "NY:ABC-123");
+  assert.equal(env.elements.get("#identifierKind").value, "plate");
+  assert.equal(env.messages.at(-1).type, "SAVE_UI_DRAFT");
+  assert.equal(env.messages.some((message) => message.type === "UPSERT_ASSIGNMENT"), false);
+});
+
+test("needs review counts each toll once and pre-fills a mixed identifier choice", async () => {
+  const env = await dashboard();
+  assert.equal(env.elements.get("#navReviewCount").textContent, 1);
+  const buttons = descendants(env.elements.get("#tollReviewList")).filter((item) => item.dataset.mapVehicleId);
+  assert.deepEqual(buttons.map((button) => button.dataset.mapKind), ["tag", "plate"]);
+  await env.elements.get("#tollReviewList").listeners.click({ target: buttons[0] });
+  assert.equal(env.elements.get("#vehicleId").value, "car1");
+  assert.equal(env.elements.get("#identifier").value, "000123");
+  assert.equal(env.messages.at(-1).type, "SAVE_UI_DRAFT");
 });

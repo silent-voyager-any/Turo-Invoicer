@@ -61,7 +61,7 @@ Skeletons alone do not satisfy the wait. Structural completeness does not imply 
 
 The popup is a compact launcher and sync status surface. `dashboard.html` is the persistent extension page for reconciliation and fleet configuration. It renders only stored normalized records and sends all writes through the service worker; it does not communicate directly with portal pages.
 
-Fleet assignments associate a Turo vehicle ID with an E-ZPass tag or plate over an inclusive local-date interval. The worker validates dates, rejects overlapping ranges for the same identifier, rebuilds the derived vehicle list, and recalculates reconciliation in its serialized state queue. Unfinished assignment form values are stored separately in `uiDrafts` and restored when the dashboard reopens.
+Fleet assignments associate a Turo internal vehicle ID with an E-ZPass tag or plate over an inclusive local-date interval. The worker retains raw identifiers, derives canonical comparison values, rejects canonically overlapping ranges, rebuilds vehicle cards from Turo labels/plates, and recalculates reconciliation in its serialized state queue. A discovered Turo plate is only a suggestion until the user confirms it. Review shortcuts store an unfinished `uiDrafts` value; they never create an assignment silently.
 
 Schema 4 builds `invoiceDrafts` through the pure `workspace.js` module. Only unique vehicle-confirmed matches enter a trip draft; collection completeness, Turo invoice status, empty toll sets, and sent fingerprints become explicit blockers. Toll/trip selections and integer-cent summaries persist locally. `evidence` and `submissionLedger` remain reserved for later milestones; no capture or submission is available yet.
 
