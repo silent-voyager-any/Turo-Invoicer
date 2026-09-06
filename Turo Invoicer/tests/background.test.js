@@ -7,6 +7,7 @@ let noEzpass = false;
 let doubleTuro = false;
 let delayTuro = false;
 let accessLevel;
+const sentMessages = [];
 let turoUrl = "https://turo.com/us/en/trips/history";
 let ezpassUrl = "https://www.e-zpassny.com/ezpass/dashboard/transactions";
 const portalResponses = {
@@ -25,6 +26,7 @@ globalThis.chrome = {
   tabs: {
     query: async ({ url }) => url[0].includes("turo") ? (doubleTuro ? [{ id: 1, url: turoUrl }, { id: 3, url: turoUrl }] : [{ id: 1, url: turoUrl }]) : (noEzpass ? [] : [{ id: 2, url: ezpassUrl }]),
     sendMessage: async (id, message) => {
+      sentMessages.push({ id, message: structuredClone(message) });
       if (message.type === "CLEAR_CAPTURE") return { ok: true };
       if (id === 1 && delayTuro) await new Promise((resolve) => setTimeout(resolve, 5100));
       return structuredClone(portalResponses[id]);
@@ -55,6 +57,7 @@ test("worker trusts exact extension UI pages and rejects all other senders", asy
   })).ok, false);
 });
 test("worker collects both sources atomically and strips extra fields", async () => {
+  sentMessages.length = 0;
   const result = await call({ type: "RUN_SYNC" });
   assert.equal(result.ok, true);
   assert.equal(result.synced, true);
@@ -62,7 +65,12 @@ test("worker collects both sources atomically and strips extra fields", async ()
   assert.equal(result.state.sources.ezpass.records.length, 1);
   assert.equal(result.state.sources.turo.records[0].guestName, undefined);
   assert.equal(result.state.sources.ezpass.records[0].accountNumber, undefined);
-  assert.equal(result.state.reconciliation.matched.length, 1);
+  assert.equal(result.state.reconciliation.matched.length, 0);
+  assert.equal(result.state.reconciliation.unmatchedTolls[0].reason, "identifier_not_mapped");
+  assert.deepEqual(sentMessages.filter(({ message }) => message.type === "COLLECT_NOW").map(({ id }) => id), [1, 2]);
+  assert.deepEqual(sentMessages.find(({ id, message }) => id === 2 && message.type === "COLLECT_NOW").message.range,
+    { startDate: "2026-07-01", endDate: "2026-07-01" });
+  assert.deepEqual(result.state.collectionRuns.ezpass.requestedRange, { startDate: "2026-07-01", endDate: "2026-07-01" });
 });
 test("failed or multiple-tab collection preserves the prior snapshot", async () => {
   const before = JSON.stringify(stored);
@@ -89,7 +97,7 @@ test("worker accepts Turo responses beyond the old five-second transport deadlin
   try {
     const result = await call({ type: "RUN_SYNC" });
     assert.equal(result.synced, true);
-    assert.equal(result.state.reconciliation.matched.length, 1);
+    assert.equal(result.state.reconciliation.unmatchedTolls[0].reason, "identifier_not_mapped");
   } finally { delayTuro = false; }
 });
 test("a content-side hydration timeout preserves the complete previous snapshot", async () => {

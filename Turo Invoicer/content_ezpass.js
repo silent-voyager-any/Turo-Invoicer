@@ -27,7 +27,7 @@
     const amount = scalar(pick(value, ["displayAmount", "tollAmount", "transactionAmount", "amount", "chargeAmount", "charge", "fare"]));
     if (!hasCompleteInstant(time) || plaza == null || amount == null) return null;
     return {
-      id: scalar(pick(value, ["transactionId", "txnId", "transactionNumber", "referenceNumber", "id"])),
+      id: scalar(pick(value, ["laneTxnId", "laneTransactionId", "transactionId", "txnId", "transactionNumber", "referenceNumber", "id"])),
       timestamp: time, plaza: String(plaza), amount,
       tagId: scalar(pick(value, ["tagId", "tagNumber", "transponderId", "transponderNumber"])),
       plate: scalar(pick(value, ["licensePlate", "plateNumber", "plate"])),
@@ -54,8 +54,8 @@
       ]);
       const tagged = cell([/^tag plate(?: number| no)?$/]);
       const type = cell([/^activity$/, /^transaction type$/, /^activity type$/, /^type$/]);
-      add({
-        transactionId: row.dataset.transactionId || cell([/^transaction (?:id|number|no)$/, /^reference(?: number)?$/]),
+      const candidate = {
+        transactionId: row.dataset.transactionId || cell([/^lane txn id$/, /^transaction (?:id|number|no)$/, /^reference(?: number)?$/]),
         timestamp: row.dataset.timestamp || explicitDateTime ||
           (date && /\d{1,2}:\d{2}/.test(date) ? date : date && time ? date + " " + time : null) ||
           textOf(row, ['[data-field="transactionDateTime"]', '[data-testid="transaction-date-time"]']),
@@ -73,7 +73,10 @@
         tagOrPlate: tagged,
         plate: row.dataset.plate || cell([/^license plate(?: number)?$/, /^plate(?: number| no)?$/]),
         activity: type
-      });
+      };
+      // Do not count header/layout rows as raw transactions. Credit rows still
+      // enter the raw count and are deliberately rejected by parseToll.
+      if (candidate.transactionId || candidate.timestamp || candidate.transactionDate || candidate.amount || candidate.activity) add(candidate);
     }
   }
 
@@ -83,6 +86,7 @@
     waitTimeoutMs: 20000,
     settleMs: 300,
     observeThrottleMs: 100,
+    collect: globalThis.EzpassCollection?.collect,
     emptyMessage: "Timed out after 20 seconds waiting for complete E-ZPass toll postings. Credits and other non-toll activity are ignored; a toll must include an exit/transaction date, time, plaza, and amount. Apply a date range, then reload the page and retry."
   });
 })();

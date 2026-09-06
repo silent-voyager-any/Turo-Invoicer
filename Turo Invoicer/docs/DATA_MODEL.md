@@ -161,3 +161,5 @@ Storage area: `chrome.storage.local`. Key: `turoTollReconcilerState`.
 ```
 
 Successful sync replaces the records/results and sets ISO refresh timestamps. Schema 4 derives one draft per completed trip, nests only uniquely vehicle-confirmed tolls, preserves explicit selections, and records source completeness separately from record counts. Schema-3 source records and fleet assignments migrate without data loss but remain incomplete and `status_unknown` until verified by future complete adapters. Clearing removes this key and resets settings, fleet data, drafts, and source data.
+
+Version 0.4.2 collection runs may also contain `range`, `requestedRange`, `chunkCount`, and `terminalReason`. E-ZPass completeness requires every requested Transaction Date chunk to reach `next_disabled` or a verified `empty_range`; a record count alone never establishes completeness. Turo's derived range describes the completed trips actually returned, not proof that all history pages were collected.

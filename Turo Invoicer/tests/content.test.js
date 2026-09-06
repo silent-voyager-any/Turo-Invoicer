@@ -52,6 +52,15 @@ test("E-ZPass adapter combines transaction date/time and discards extra fields",
   assert.equal(record.vehicleId, null);
   assert.equal(record.paymentDetails, undefined);
 });
+test("E-ZPass prefers the inspected Lane Txn ID as its stable source key", () => {
+  const { parse } = adapter("content_ezpass.js");
+  const record = parse({
+    laneTxnId: "synthetic-lane-1", transactionId: "fallback",
+    transactionDate: "07/01/2026", transactionTime: "12:30 PM",
+    plaza: "Example", amount: "-$4.25", tagOrPlateNumber: "000001"
+  });
+  assert.equal(record.id, "synthetic-lane-1");
+});
 test("E-ZPass rejects posting dates and non-scalar amounts", () => {
   const { parse } = adapter("content_ezpass.js");
   assert.equal(parse({ postedAt: "2026-07-01T12:00Z", plaza: "Lincoln", amount: 10 }), null);

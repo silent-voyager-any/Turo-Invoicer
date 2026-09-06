@@ -1,4 +1,4 @@
-import { canonicalizeIdentifier, DEFAULT_TIME_ZONE, reconcileTolls, selectCompletedTrips } from "./reconciler.js";
+import { canonicalizeIdentifier, DEFAULT_TIME_ZONE, reconcileTolls, selectCompletedTrips, tripCollectionRange } from "./reconciler.js";
 import { buildTripWorkspace, selectAllReady, setTollSelection, setTripSelection, summarizeSelection } from "./workspace.js";
 
 const STORAGE_KEY = "turoTollReconcilerState";
@@ -163,7 +163,7 @@ async function tabRequest(tabId, message, timeoutMs = 5000) {
   }
 }
 
-async function collect(source) {
+async function collect(source, request = {}) {
   let tabs = await chrome.tabs.query({ url: PATTERNS[source] });
   if (source === "turo") tabs = tabs.filter((tab) => isHistoryUrl(tab.url));
   else tabs = tabs.filter((tab) => isTransactionsUrl(tab.url));
@@ -178,7 +178,9 @@ async function collect(source) {
   }
   try {
     // Turo detail reads share its 20s content deadline; allow 5s for the reply.
-    const response = await tabRequest(tabs[0].id, { type: "COLLECT_NOW" }, 25000);
+    const response = await tabRequest(tabs[0].id, {
+      type: "COLLECT_NOW", ...(source === "ezpass" ? { range: request.range } : {})
+    }, source === "ezpass" ? 125000 : 25000);
     if (response?.source !== source || !response.ok) throw new Error(response?.error || "Unexpected portal response.");
     if (source === "turo" && response.pagePath !== HISTORY_PATH) throw new Error("Reload the extension and Turo history tab; the history-only collector is not active.");
     if (source === "ezpass" && response.pagePath !== TRANSACTIONS_PATH) throw new Error("Reload the extension and E-ZPass transactions tab; the transactions collector is not active.");
@@ -187,7 +189,8 @@ async function collect(source) {
       throw new Error("Portal left the supported data page during sync. Return and retry.");
     }
     let records = sanitizeRecords(source, response.records);
-    if (!records.length) throw new Error("No supported records captured. Open the data page and reload it.");
+    const verifiedEmpty = source === "ezpass" && response.complete === true && response.terminalReason === "empty_range";
+    if (!records.length && !verifiedEmpty) throw new Error("No supported records captured. Open the data page and reload it.");
     let warning = response.warning || null;
     if (source === "turo") {
       const state = await getState();
@@ -200,7 +203,10 @@ async function collect(source) {
       source, ok: true, records, warning,
       complete: response.complete === true,
       pageCount: Number.isInteger(response.pageCount) && response.pageCount > 0 ? response.pageCount : 1,
-      rawCount: Number.isInteger(response.rawCount) && response.rawCount >= records.length ? response.rawCount : records.length
+      rawCount: Number.isInteger(response.rawCount) && response.rawCount >= records.length ? response.rawCount : records.length,
+      range: source === "ezpass" ? request.range || null : null,
+      chunkCount: Number.isInteger(response.chunkCount) && response.chunkCount > 0 ? response.chunkCount : 1,
+      terminalReason: typeof response.terminalReason === "string" ? response.terminalReason.slice(0, 100) : null
     };
   } catch (error) {
     return { source, ok: false, error: error.message || "Reload the portal tab after installation." };
@@ -208,7 +214,17 @@ async function collect(source) {
 }
 
 async function runSync() {
-  const [turo, ezpass] = await Promise.all([collect("turo"), collect("ezpass")]);
+  // Turo defines the minimum E-ZPass range. Sequential collection prevents a
+  // stale/default portal range from being compared with the newly loaded trips.
+  const turo = await collect("turo");
+  if (!turo.ok) return { state: await getState(), collection: { turo, ezpass: { ok: false, error: "E-ZPass was not started because Turo collection failed." } }, synced: false };
+  const currentState = await getState();
+  const range = tripCollectionRange(turo.records, {
+    timeZone: currentState.settings.timeZone, graceMinutes: currentState.settings.graceMinutes
+  });
+  if (!range) return { state: currentState, collection: { turo, ezpass: { ok: false, error: "No completed-trip coverage range is available." } }, synced: false };
+  turo.range = range;
+  const ezpass = await collect("ezpass", { range });
   // Commit both sources together. A failed/empty extraction leaves the last
   // complete snapshot intact and visibly reports that it was NOT refreshed.
   if (!turo.ok || !ezpass.ok) {
@@ -224,7 +240,11 @@ async function runSync() {
       recordCount: result.records.length,
       rawCount: result.rawCount,
       updatedAt: now,
-      warning: result.complete ? null : (result.warning || "Only records loaded by the current portal page were captured; pagination is incomplete.")
+      warning: result.complete ? null : (result.warning || "Only records loaded by the current portal page were captured; pagination is incomplete."),
+      range: result.range || null,
+      requestedRange: result.source === "ezpass" ? range : result.range || null,
+      chunkCount: result.chunkCount || 1,
+      terminalReason: result.terminalReason || null
     };
   }
   state.tripEligibility = Object.fromEntries(state.sources.turo.records.map((trip) => [String(trip.id), {
@@ -443,7 +463,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: false, error: "Untrusted sender." });
     return false;
   }
-  // Serialize read-modify-write operations; the two portal reads stay parallel.
+  // Serialize read-modify-write operations. Portal collection is also ordered:
+  // Turo establishes the E-ZPass date range before toll pagination begins.
   // Service-worker restarts simply reload the last persisted snapshot.
   const work = operations.then(() => handle(message));
   operations = work.catch(() => {});

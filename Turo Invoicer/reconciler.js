@@ -277,6 +277,20 @@ export function selectCompletedTrips(trips, { timeZone = DEFAULT_TIME_ZONE, nowM
   return { completed, excludedCount };
 }
 
+/** Returns the inclusive local-date coverage needed to reconcile a completed
+ * trip set. Grace is applied before conversion so midnight boundaries are not
+ * accidentally omitted. */
+export function tripCollectionRange(trips, { timeZone = DEFAULT_TIME_ZONE, graceMinutes = 0 } = {}) {
+  const normalized = trips.map((trip) => normalizeTrip(trip, timeZone)).filter((trip) =>
+    Number.isFinite(trip.startMs) && Number.isFinite(trip.endMs) && trip.startMs <= trip.endMs);
+  if (!normalized.length) return null;
+  const graceMs = Math.max(0, Number(graceMinutes) || 0) * 60000;
+  return {
+    startDate: localDateAt(Math.min(...normalized.map((trip) => trip.startMs)) - graceMs, timeZone),
+    endDate: localDateAt(Math.max(...normalized.map((trip) => trip.endMs)) + graceMs, timeZone)
+  };
+}
+
 /**
  * Matches a toll instant against inclusive trip intervals. A match is only
  * automatic when exactly one trip qualifies; overlaps are returned as
@@ -325,7 +339,14 @@ export function reconcileTolls(tolls = [], trips = [], options = {}) {
       unmatchedTolls.push({ toll, reason: "conflicting_vehicle_mapping" });
       continue;
     }
-    const mappedVehicle = identities[0];
+    const uniqueIdentities = [...new Set(identities)];
+    const timeCandidates = validTrips.filter((trip) =>
+      toll.timestampMs >= trip.startMs - graceMs && toll.timestampMs <= trip.endMs + graceMs);
+    if (!uniqueIdentities.length) {
+      unmatchedTolls.push({ toll, reason: "identifier_not_mapped", candidates: timeCandidates });
+      continue;
+    }
+    const mappedVehicle = uniqueIdentities[0];
     const candidates = validTrips.filter((trip) => {
       const inWindow =
         toll.timestampMs >= trip.startMs - graceMs &&
@@ -340,14 +361,15 @@ export function reconcileTolls(tolls = [], trips = [], options = {}) {
       matched.push({
         toll,
         trip,
-        vehicleConfirmed: Boolean(mappedVehicle),
+        vehicleConfirmed: true,
+        mappedVehicleId: mappedVehicle,
         withinGrace:
           toll.timestampMs < trip.startMs || toll.timestampMs > trip.endMs
       });
     } else if (candidates.length > 1) {
-      ambiguous.push({ toll, candidates, reason: "overlapping_trips" });
+      ambiguous.push({ toll, candidates, reason: "overlapping_trips", mappedVehicleId: mappedVehicle });
     } else {
-      unmatchedTolls.push({ toll, reason: "no_trip_in_time_range" });
+      unmatchedTolls.push({ toll, reason: "mapped_vehicle_no_trip", mappedVehicleId: mappedVehicle });
     }
   }
 

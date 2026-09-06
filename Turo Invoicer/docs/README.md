@@ -1,6 +1,6 @@
 # Project documentation
 
-This reference describes version 0.4.1, including vehicle cards, canonical tag/plate matching, the trip-centric dashboard, schema-4 drafts and selections, authenticated same-origin Turo detail reads, completed-trip filtering, and E-ZPass normalization. Last reviewed: September 6, 2026.
+This reference describes version 0.4.2, including vehicle cards, canonical tag/plate matching, the trip-centric dashboard, schema-4 drafts and selections, authenticated same-origin Turo detail reads, completed-trip filtering, and complete range-aware E-ZPass pagination. Last reviewed: September 6, 2026.
 
 ## Reading paths
 
@@ -30,8 +30,8 @@ Paths below are relative to the extension directory.
 
 ## Implementation versus roadmap
 
-Implemented: passive current-page capture, explicit-sync JSON reads for history-linked reservations, completed-trip filtering, trip-centric drafts, nested uniquely confirmed tolls, persistent toll/trip selection, exact cent totals, four dashboard pages, autosaved fleet drafts, dated tag/plate assignments, safe blockers, bounded SPA waiting, and local clearing.
+Implemented: passive capture, explicit-sync JSON reads for history-linked reservations, completed-trip filtering, range-derived E-ZPass filtering and pagination, trip-centric drafts, nested uniquely confirmed tolls, persistent toll/trip selection, exact cent totals, four dashboard pages, autosaved fleet drafts, dated tag/plate assignments, safe blockers, bounded SPA waiting, and local clearing.
 
-Not implemented: automatic pagination, screenshot evidence storage, invoice generation/submission, account identity verification, completeness certification, backend services, licensing/billing, or a packaged Chrome Web Store release. These remain gated in the root `PROJECT_PLAN.md`.
+Not implemented: complete Turo history pagination, screenshot evidence storage, invoice generation/submission, account identity verification, backend services, licensing/billing, or a packaged Chrome Web Store release. These remain gated roadmap work.
 
 The project name does not imply those missing invoicing capabilities exist. Use the source and tests as the implementation reference; treat portal selectors as adapters to validate, not guaranteed contracts.

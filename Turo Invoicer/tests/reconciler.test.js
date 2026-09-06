@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { canonicalizeIdentifier, toEpochMs, normalizeAmount, reconcileTolls, selectCompletedTrips } from "../reconciler.js";
+import { canonicalizeIdentifier, toEpochMs, normalizeAmount, reconcileTolls, selectCompletedTrips, tripCollectionRange } from "../reconciler.js";
 
 const trip = { id: "trip-1", vehicleId: "car-1", start: "2026-07-01 09:00", end: "2026-07-01 18:00" };
 const toll = { id: "toll-1", timestamp: "2026-07-01 12:00", plaza: "Queens Midtown", amount: "$6.94" };
@@ -32,15 +32,18 @@ test("parses monetary values without treating missing values as zero", () => {
   assert.equal(normalizeAmount("($6.94)"), -6.94);
   for (const value of ["", "N/A", "USD TBD", null]) assert.equal(normalizeAmount(value), null);
 });
-test("a unique temporal suggestion is explicitly unconfirmed by vehicle", () => {
+test("a unique temporal suggestion remains unmapped until the vehicle is confirmed", () => {
   const result = reconcileTolls([toll], [trip]);
-  assert.equal(result.matched.length, 1);
-  assert.equal(result.matched[0].vehicleConfirmed, false);
-  assert.equal(result.matched[0].toll.amountCents, 694);
+  assert.equal(result.matched.length, 0);
+  assert.equal(result.unmatchedTolls[0].reason, "identifier_not_mapped");
+  assert.equal(result.unmatchedTolls[0].candidates[0].id, "trip-1");
+  assert.equal(result.unmatchedTolls[0].toll.amountCents, 694);
 });
 test("inclusive adjacent boundaries produce ambiguity", () => {
   const next = { ...trip, id: "trip-2", start: trip.end, end: "2026-07-01 20:00" };
-  const result = reconcileTolls([{ ...toll, timestamp: trip.end }], [trip, next]);
+  const result = reconcileTolls([{ ...toll, timestamp: trip.end, tagId: "001" }], [trip, next], {
+    vehicleByTag: { "001": "car-1" }
+  });
   assert.equal(result.ambiguous.length, 1);
   assert.equal(result.matched.length, 0);
 });
@@ -56,9 +59,9 @@ test("tag mappings resolve overlaps, and conflicting mappings require review", (
   assert.equal(conflict.unmatchedTolls[0].reason, "conflicting_vehicle_mapping");
 });
 test("grace periods are opt-in and flagged", () => {
-  const early = { ...toll, timestamp: "2026-07-01 08:50" };
+  const early = { ...toll, timestamp: "2026-07-01 08:50", tagId: "001" };
   assert.equal(reconcileTolls([early], [trip]).matched.length, 0);
-  assert.equal(reconcileTolls([early], [trip], { graceMinutes: 15 }).matched[0].withinGrace, true);
+  assert.equal(reconcileTolls([early], [trip], { graceMinutes: 15, vehicleByTag: { "001": "car-1" } }).matched[0].withinGrace, true);
 });
 test("invalid trips and nonpositive/invalid amounts do not match", () => {
   const result = reconcileTolls([{ ...toll, amount: "N/A" }, { ...toll, amount: 0 }], [trip, { ...trip, end: "bad" }]);
@@ -72,7 +75,7 @@ test("does not mutate inputs", () => {
   assert.equal(JSON.stringify({ toll, trip }), original);
 });
 test("normalizes E-ZPass debit signs to a positive charge before matching", () => {
-  const result = reconcileTolls([{ ...toll, amount: "-$6.94" }], [trip]);
+  const result = reconcileTolls([{ ...toll, amount: "-$6.94", tagId: "001" }], [trip], { vehicleByTag: { "001": "car-1" } });
   assert.equal(result.matched.length, 1);
   assert.equal(result.matched[0].toll.amount, 6.94);
   assert.equal(result.matched[0].toll.amountCents, 694);
@@ -108,7 +111,23 @@ test("canonical identifiers match formatting without weakening exact identity", 
 });
 test("Turo internal IDs are never inferred from E-ZPass identifiers", () => {
   const result = reconcileTolls([{ ...toll, tagOrPlate: "car-1", vehicleId: "car-1" }], [trip]);
-  assert.equal(result.matched[0].vehicleConfirmed, false);
+  assert.equal(result.matched.length, 0);
+  assert.equal(result.unmatchedTolls[0].reason, "identifier_not_mapped");
+});
+
+test("mapped tolls outside completed trips are personal or unassigned", () => {
+  const result = reconcileTolls([{ ...toll, timestamp: "2026-07-02 12:00", tagId: "001" }], [trip], {
+    vehicleByTag: { "001": "car-1" }
+  });
+  assert.equal(result.unmatchedTolls[0].reason, "mapped_vehicle_no_trip");
+  assert.equal(result.unmatchedTolls[0].mappedVehicleId, "car-1");
+});
+
+test("completed trips derive an inclusive local E-ZPass coverage range with grace", () => {
+  assert.deepEqual(tripCollectionRange([trip], { graceMinutes: 60 }), { startDate: "2026-07-01", endDate: "2026-07-01" });
+  const midnight = { ...trip, start: "2026-07-01 00:30", end: "2026-07-01 23:30" };
+  assert.deepEqual(tripCollectionRange([midnight], { graceMinutes: 60 }), { startDate: "2026-06-30", endDate: "2026-07-02" });
+  assert.equal(tripCollectionRange([]), null);
 });
 test("dated fleet assignments resolve only inside their inclusive local-date range", () => {
   const second = { ...trip, id: "trip-2", vehicleId: "car-2" };
@@ -120,5 +139,6 @@ test("dated fleet assignments resolve only inside their inclusive local-date ran
   const expired = reconcileTolls([{ ...tagged, timestamp: "2026-07-02 12:00" }], [
     { ...trip, end: "2026-07-02 18:00" }, { ...second, end: "2026-07-02 18:00" }
   ], { vehicleAssignments: assignments });
-  assert.equal(expired.ambiguous.length, 1);
+  assert.equal(expired.ambiguous.length, 0);
+  assert.equal(expired.unmatchedTolls[0].reason, "identifier_not_mapped");
 });

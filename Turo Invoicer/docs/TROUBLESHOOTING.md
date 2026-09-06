@@ -53,11 +53,13 @@ Network records take precedence over DOM records. Stale partial network capture 
 
 ## E-ZPass filters and manual tags
 
-Apply the date, plate, and tag filters in the portal yourself, then sync. Version 0.4.0 supports E-ZPass exit times with fractional seconds and converts negative toll-posting debits to positive charge amounts. Adapters support semantic tables, first-row legacy headers, accessible grids, mobile data labels, split date/time columns, and common punctuation/key variants. Credits, payments, replenishments, deposits, refunds, balance adjustments, posting-only rows, and rows without a complete toll time are ignored. These are tested fallbacks, not a guarantee of future private-schema compatibility.
+Version 0.4.2 derives the E-ZPass Transaction Date range from completed Turo trips, applies it automatically, and walks every page until Next is disabled. Keep the E-ZPass transaction tab open and do not change its filters during sync. Exit times with fractional seconds are supported and negative toll-posting debits become positive charge amounts. Credits, payments, replenishments, deposits, refunds, balance adjustments, posting-only rows, and rows without a complete toll time are ignored.
+
+If the collector reports that E-ZPass left the transactions page, confirm the tab was not navigated during sync. Version 0.4.2 finds Search by walking from the two visible date inputs through the transaction main region, with no fixed DOM nesting limit and no assumption that their field-label text shares the same wrapper. It supports both button and input-based Search controls while excluding the portal header. An unrecognized or ambiguous filter layout fails before clicking and preserves prior results.
 
 ### Trips are visible but disabled
 
-Version 0.4.1 intentionally labels the current collectors incomplete because they capture only records loaded by the current portal page. Turo toll-invoice status is also `status_unknown` until its authenticated response contract is verified. Confirmed toll matches still appear beneath trips; these blockers prevent selection, not display.
+E-ZPass is complete only when every requested chunk reaches an empty result or a disabled Next control. Turo history pagination and toll-invoice status remain unverified. Confirmed toll matches still appear beneath trips; those independent blockers prevent selection, not display.
 
 The number after “Turo internal vehicle ID” is Turo's internal car reference, not an E-ZPass tag. Use the discovered vehicle card to confirm its plate and add its complete tag values. Identifier formatting is normalized safely, but leading zeros are not interchangeable.
 

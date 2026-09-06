@@ -10,7 +10,7 @@ This directory is the runnable Chrome Manifest V3 extension. Select this folder,
 4. Open the fleet dashboard from the popup, then select **Sync portal tabs**. Both collectors can take up to 20 seconds. Only completed Turo trips qualify.
 5. Review suggestions and use the dashboard's dated vehicle-ID/tag/plate form before relying on a result.
 
-Version 0.4.1 adds vehicle cards, confirmable Turo plate suggestions, multiple E-ZPass tag assignments, canonical identifier comparison, and actionable mapping review. Turo's internal vehicle ID is displayed only as a diagnostic and is never treated as a toll tag. Current-page captures remain explicitly incomplete, and unknown Turo invoice states remain blocked. Automatic pagination, evidence, and submission are not yet enabled. Reload the extension and both portal tabs after updating.
+Version 0.4.2 collects Turo first, derives the required E-ZPass Transaction Date range from completed trips, and walks the E-ZPass result pages until the disabled Next control proves completion. It also distinguishes unmapped identifiers from mapped personal/unassigned tolls and shows source coverage in the dashboard. Turo pagination and invoice status remain fail-closed; evidence and submission are not yet enabled. Reload the extension and both portal tabs after updating.
 
 No package installation or build is needed. Development checks, from this directory:
 

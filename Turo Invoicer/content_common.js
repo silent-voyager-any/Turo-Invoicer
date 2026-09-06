@@ -227,6 +227,12 @@
           return false;
         }
         paused = false;
+        if (typeof options.collect === "function" && message.range) {
+          Promise.resolve(options.collect({ range: message.range, parseRecord, readDom }))
+            .then((result) => reply({ ok: true, source, pagePath: capturePath, ...result }))
+            .catch((error) => reply({ ok: false, source, error: error?.message || "Portal collection failed." }));
+          return true;
+        }
         extractDom();
         if (waitTimeoutMs) {
           waitForRecords(reply);

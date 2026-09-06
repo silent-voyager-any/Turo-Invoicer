@@ -1,6 +1,6 @@
 const ids = [
   "syncButton", "clearButton", "graceMinutes", "status", "statusDot", "tripCount", "tollCount", "draftCount", "selectedTotal",
-  "turoCompleteness", "ezpassCompleteness", "lastSync", "assignmentForm", "vehicleId", "vehicleLabel", "identifierKind", "identifier",
+  "turoCompleteness", "ezpassCompleteness", "coverageStatus", "lastSync", "assignmentForm", "vehicleId", "vehicleLabel", "identifierKind", "identifier",
   "validFrom", "validTo", "vehicleOptions", "assignmentList", "tripsList", "tollReviewList", "tripBlockerList", "batchList", "selectAllButton", "prepareButton",
   "batchTrips", "batchTolls", "batchTotal", "navReviewCount", "navBatchCount", "navVehicles", "navTrips", "navReview", "navBatch",
   "vehiclesView", "tripsView", "reviewView", "batchView"
@@ -37,6 +37,9 @@ const reasonLabel = (reason) => ({
   invalid_timestamp: "Invalid or ambiguous toll timestamp",
   invalid_or_nonpositive_amount: "Invalid toll amount",
   conflicting_vehicle_mapping: "Vehicle assignments conflict",
+  identifier_not_mapped: "Identifier is not mapped to a vehicle",
+  mapped_vehicle_no_trip: "Personal/unassigned — no completed trip for this vehicle",
+  overlapping_trips: "Overlapping trips require review",
   no_trip_in_time_range: "No trip in range"
 }[reason] || String(reason || "Requires review").replaceAll("_", " "));
 
@@ -97,8 +100,17 @@ function vehicleCard(vehicle, assignments) {
 }
 function collectionLabel(source, run) {
   const name = source === "turo" ? "Turo" : "E-ZPass";
-  return run?.complete ? `${name} complete · ${run.pageCount || 0} pages · ${run.recordCount || 0} records`
-    : `${name} incomplete · ${run?.recordCount || 0} loaded`;
+  const range = run?.range || run?.requestedRange;
+  const coverage = range?.startDate && range?.endDate ? ` · ${range.startDate}–${range.endDate}` : "";
+  return run?.complete ? `${name} complete · ${run.pageCount || 0} pages · ${run.recordCount || 0} records${coverage}`
+    : `${name} incomplete · ${run?.recordCount || 0} loaded${coverage}`;
+}
+function coverageLabel(runs = {}) {
+  const turo = runs.turo?.range, ezpass = runs.ezpass?.range || runs.ezpass?.requestedRange;
+  if (!turo?.startDate || !turo?.endDate || !ezpass?.startDate || !ezpass?.endDate) return { text: "Coverage unavailable", warning: true };
+  const overlap = turo.startDate <= ezpass.endDate && ezpass.startDate <= turo.endDate;
+  return overlap ? { text: "Turo and E-ZPass coverage overlaps", warning: false }
+    : { text: "Warning: Turo and E-ZPass date ranges do not overlap", warning: true };
 }
 function checkbox(action, reservationId, checked, disabled, tollId = null) {
   const input = document.createElement("input"); input.type = "checkbox"; input.checked = checked; input.disabled = disabled;
@@ -152,6 +164,9 @@ function render(state, { restore = false } = {}) {
   for (const [source, target] of [["turo", el.turoCompleteness], ["ezpass", el.ezpassCompleteness]]) {
     const run = state.collectionRuns?.[source]; target.textContent = collectionLabel(source, run); target.className = run?.complete ? "complete" : "incomplete";
   }
+  const coverage = coverageLabel(state.collectionRuns);
+  el.coverageStatus.textContent = coverage.text;
+  el.coverageStatus.className = coverage.warning ? "incomplete" : "complete";
   el.vehicleOptions.replaceChildren(...(state.fleet?.vehicles || []).map((vehicle) => { const option = document.createElement("option"); option.value = vehicle.vehicleId; option.label = [vehicle.label || vehicle.vehicleId, vehicle.sourcePlate].filter(Boolean).join(" · "); return option; }));
   fill(el.assignmentList, (state.fleet?.vehicles || []).map((vehicle) => vehicleCard(vehicle,
     (state.fleet?.assignments || []).filter((assignment) => String(assignment.vehicleId) === String(vehicle.vehicleId)))), "Sync Turo history to discover vehicles.");
@@ -168,7 +183,14 @@ function render(state, { restore = false } = {}) {
     if (!tollReview.has(key)) tollReview.set(key, reviewCard(`${moneyCents(toll.amountCents)} · ${toll.plaza}`,
       `${identifier(toll)} · ${formatTime(toll.timestampMs, state.settings?.timeZone)} · ${detail}`, actions));
   };
-  for (const { toll, reason } of state.reconciliation?.unmatchedTolls || []) addIssue(toll, reasonLabel(reason));
+  for (const issue of state.reconciliation?.unmatchedTolls || []) {
+    const { toll, reason, candidates = [], mappedVehicleId } = issue;
+    const vehicle = (state.fleet?.vehicles || []).find((item) => String(item.vehicleId) === String(mappedVehicleId));
+    const mappedDetail = mappedVehicleId ? ` · Vehicle: ${vehicle?.label || vehicle?.sourcePlate || mappedVehicleId}` : "";
+    const actions = reason === "identifier_not_mapped" && candidates.length === 1
+      ? mappingActions(toll, candidates[0], state) : [];
+    addIssue(toll, `${reasonLabel(reason)}${mappedDetail}`, actions);
+  }
   for (const match of (state.reconciliation?.matched || []).filter((item) => !item.vehicleConfirmed)) {
     addIssue(match.toll, "Time matches one trip, but this identifier is not mapped to its vehicle", mappingActions(match.toll, match.trip, state));
   }

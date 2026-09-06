@@ -29,7 +29,7 @@ Use toll passage/transaction time, not posting date. Check which vehicles and re
 
 Open the extension, choose **Open fleet dashboard**, and click **Find uncharged trips**. The dashboard is a persistent extension tab with Vehicles, Trips, Needs review, and Batch pages, so it remains open while you switch to Turo or E-ZPass.
 
-Turo waits for records containing a vehicle ID and both trip times, up to 20 seconds. A brief settling window groups nearby render updates. An incoming supported network response can also complete collection. E-ZPass also waits up to 20 seconds for supported activity rows or responses. Use its date, plate, and tag filters before syncing.
+Turo waits for records containing a vehicle ID and both trip times, up to 20 seconds. A brief settling window groups nearby render updates. An incoming supported network response can also complete collection. The worker then derives the required E-ZPass Transaction Date range and the signed-in E-ZPass tab automatically filters and paginates that range. Leave the transaction tab open and do not navigate it during collection.
 
 During sync, history cards with numeric reservation links can trigger read-only requests to Turo's same-origin reservation-detail JSON endpoint. Your history tab stays in place. Up to 50 discovered reservations are supported, with three requests at once and a six-second limit per read, inside the total 20-second collection deadline. Every discovered reservation must resolve; failed or incomplete reads do not replace prior results. Keep history open and avoid changing its range during sync. If the range is too large, reload and load fewer cards before retrying.
 
@@ -73,7 +73,7 @@ This action does not delete portal records or browser cookies. A later explicit 
 
 ## History-only policy and upgrade
 
-Version 0.4.1 groups uniquely vehicle-confirmed tolls beneath completed-trip drafts and shows every unresolved toll once under **Needs review**. Trip/source blockers are listed separately and do not inflate the unresolved-toll count. Until complete pagination and Turo invoice-status adapters are verified, records remain visible but cannot enter a batch. Reload the extension and both tabs after upgrading.
+Version 0.4.2 groups uniquely vehicle-confirmed tolls beneath completed-trip drafts and shows every unresolved toll once under **Needs review**. Mapped tolls outside completed trips appear as **Personal/unassigned**. E-ZPass displays complete range and page diagnostics; Turo pagination and invoice-status blockers remain separate and can still prevent batching. Reload the extension and both tabs after upgrading.
 
 ## Before relying on a suggestion
 

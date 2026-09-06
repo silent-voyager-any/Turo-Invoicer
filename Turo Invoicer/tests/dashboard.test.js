@@ -24,10 +24,10 @@ async function dashboard() {
       eligibility: "eligible_uncharged", tolls: [{ id: "toll", timestampMs: Date.parse("2026-01-01T16:00:00Z"), plaza: "Example", amountCents: 425, tagId: "001" }],
       selectedTollIds: ["toll"], selected: false, selectable: true, blockingReasons: [], totalCents: 425
     }],
-    selectionSummary: { tripCount: 0, tollCount: 0, totalCents: 0 }, reconciliation: { matched: [{
+    selectionSummary: { tripCount: 0, tollCount: 0, totalCents: 0 }, reconciliation: { matched: [], unmatchedTolls: [{
       toll: { id: "review-toll", timestampMs: Date.parse("2026-01-01T16:00:00Z"), plaza: "Example", amountCents: 425, tagOrPlate: "000123" },
-      trip: { id: "trip", vehicleId: "car1" }, vehicleConfirmed: false
-    }], unmatchedTolls: [], ambiguous: [] }, lastSync: null
+      reason: "identifier_not_mapped", candidates: [{ id: "trip", vehicleId: "car1" }]
+    }], ambiguous: [] }, lastSync: null
   };
   const messages = [];
   const chrome = { runtime: { sendMessage: async (message) => {
