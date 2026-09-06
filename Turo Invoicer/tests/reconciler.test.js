@@ -93,3 +93,15 @@ test("mixed tag/plate identifiers resolve only through explicit, nonconflicting 
   assert.equal(reconcileTolls([mixed], [trip], { vehicleByPlate: { "000123": "car-1" } }).matched[0].vehicleConfirmed, true);
   assert.equal(reconcileTolls([mixed], [trip], { vehicleByTag: { "000123": "car-1" }, vehicleByPlate: { "000123": "car-2" } }).unmatchedTolls[0].reason, "conflicting_vehicle_mapping");
 });
+test("dated fleet assignments resolve only inside their inclusive local-date range", () => {
+  const second = { ...trip, id: "trip-2", vehicleId: "car-2" };
+  const tagged = { ...toll, tagOrPlate: "001" };
+  const assignments = [{ kind: "tag", identifier: "001", vehicleId: "car-2", validFrom: "2026-07-01", validTo: "2026-07-01" }];
+  const matched = reconcileTolls([tagged], [trip, second], { vehicleAssignments: assignments });
+  assert.equal(matched.matched[0].trip.vehicleId, "car-2");
+  assert.equal(matched.matched[0].vehicleConfirmed, true);
+  const expired = reconcileTolls([{ ...tagged, timestamp: "2026-07-02 12:00" }], [
+    { ...trip, end: "2026-07-02 18:00" }, { ...second, end: "2026-07-02 18:00" }
+  ], { vehicleAssignments: assignments });
+  assert.equal(expired.ambiguous.length, 1);
+});

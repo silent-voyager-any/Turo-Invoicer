@@ -6,42 +6,37 @@ import { readFileSync } from "node:fs";
 async function popup() {
   const elements = new Map();
   const element = () => ({
-    value: "", textContent: "", children: [], listeners: {}, classList: { toggle() {} },
-    addEventListener(type, callback) { this.listeners[type] = callback; },
-    replaceChildren(...children) { this.children = children; },
-    append(...children) { this.children.push(...children); }, reset() {}
+    value: "", textContent: "", className: "", disabled: false, listeners: {},
+    addEventListener(type, callback) { this.listeners[type] = callback; }
   });
-  const document = {
-    querySelector(selector) { if (!elements.has(selector)) elements.set(selector, element()); return elements.get(selector); },
-    createElement: element
+  const document = { querySelector(selector) { if (!elements.has(selector)) elements.set(selector, element()); return elements.get(selector); } };
+  const state = { version: 3, sources: { turo: { records: [{ id: "trip" }] }, ezpass: { records: [{ id: "toll" }] } }, lastSync: null };
+  const opened = [];
+  let closed = false;
+  const chrome = {
+    runtime: {
+      getURL: (file) => `chrome-extension://test-id/${file}`,
+      sendMessage: async (message) => ({ ok: true, state, synced: message.type === "RUN_SYNC", collection: { turo: { ok: true }, ezpass: { ok: true } } })
+    },
+    tabs: { create: async (options) => opened.push(options) }
   };
-  let state = { sources: { turo: { records: [] }, ezpass: { records: [] } },
-    settings: { timeZone: "America/New_York", graceMinutes: 0, vehicleByTag: { existing: "car0" }, vehicleByPlate: {} },
-    reconciliation: null, lastSync: null };
-  let writes = 0;
-  const chrome = { runtime: { sendMessage: async (message) => {
-    if (message.type === "UPDATE_SETTINGS") { writes += 1; state.settings = { ...state.settings, ...message.settings }; }
-    return { ok: true, state: structuredClone(state) };
-  } } };
-  vm.runInNewContext(readFileSync("popup.js", "utf8"), { document, chrome, Intl, Date, Set });
+  vm.runInNewContext(readFileSync("popup.js", "utf8"), { document, chrome, window: { close: () => { closed = true; } }, Intl, Date, Object });
   await new Promise((resolve) => setImmediate(resolve));
-  return { elements, state, writes: () => writes };
+  return { elements, opened, closed: () => closed };
 }
 
-test("manual vehicle form saves exact tag/plate mappings without erasing other cars", async () => {
-  const { elements, state } = await popup();
-  elements.get("#vehicleIdInput").value = "12345";
-  elements.get("#tagIdInput").value = "0012345678";
-  elements.get("#plateInput").value = "NY:ABC1234";
-  await elements.get("#vehicleMappingForm").listeners.submit({ preventDefault() {} });
-  assert.equal(state.settings.vehicleByTag["0012345678"], "12345");
-  assert.equal(state.settings.vehicleByTag.existing, "car0");
-  assert.equal(state.settings.vehicleByPlate["NY:ABC1234"], "12345");
+test("popup launches the persistent dashboard and reports saved counts", async () => {
+  const env = await popup();
+  assert.equal(env.elements.get("#tripCount").textContent, 1);
+  assert.equal(env.elements.get("#tollCount").textContent, 1);
+  await env.elements.get("#openDashboard").listeners.click();
+  assert.equal(JSON.stringify(env.opened), JSON.stringify([{ url: "chrome-extension://test-id/dashboard.html" }]));
+  assert.equal(env.closed(), true);
 });
-test("manual vehicle form does not save without both a vehicle and an identifier", async () => {
-  const { elements, writes } = await popup();
-  elements.get("#vehicleIdInput").value = "12345";
-  await elements.get("#vehicleMappingForm").listeners.submit({ preventDefault() {} });
-  assert.equal(writes(), 0);
-  assert.match(elements.get("#status").textContent, /at least one/);
+
+test("popup retains a compact sync action", async () => {
+  const env = await popup();
+  await env.elements.get("#syncButton").listeners.click();
+  assert.match(env.elements.get("#status").textContent, /Sync complete/);
+  assert.equal(env.elements.get("#syncButton").disabled, false);
 });

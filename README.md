@@ -4,7 +4,7 @@ A local-first Chrome extension that helps Turo hosts reconcile NY E-ZPass toll a
 
 The extension observes data loaded in your signed-in browser tabs, matches toll timestamps to trip intervals, and presents suggestions for review. It does not require a server, store portal passwords, or submit reimbursement claims.
 
-> **Status: development scaffold, version 0.2.3.** Automated tests cover matching, extraction adapters, messaging, and SPA waiting. The current Turo and E-ZPass response shapes have been exercised in an authenticated two-tab sync, but portal completeness and future schema compatibility are not guaranteed. Do not treat suggestions as verified billing evidence.
+> **Status: development scaffold, version 0.3.0.** The persistent fleet dashboard and dated vehicle assignments are implemented. Evidence capture and Turo invoice submission remain safety-gated milestones. Current portal response shapes have been exercised in an authenticated two-tab sync, but completeness and future schema compatibility are not guaranteed.
 
 ## Features
 
@@ -19,7 +19,11 @@ The extension observes data loaded in your signed-in browser tabs, matches toll 
 - Local snapshots, atomic two-source sync, and a clear-data control.
 - No backend uploads, analytics, remote scripts, or automatic claim submission.
 
-## Version 0.2.3 update
+## Version 0.3.0 update
+
+The toolbar popup now opens a persistent dashboard, so switching to a portal no longer destroys unfinished vehicle text. Fleet mappings support inclusive effective date ranges for tag transfers and multiple cars. Version-2 mappings migrate to open-ended dated assignments, and conflicting assignment ranges fail closed. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the evidence and reviewed batch-submission roadmap.
+
+The version 0.2.3 E-ZPass behavior remains in place:
 
 E-ZPass transaction responses can provide separate exit dates and 24-hour exit times containing milliseconds. Version 0.2.3 recognizes those fields, ignores credits and other non-toll account activity, and converts negative account debits to positive toll-charge amounts for reconciliation. The authenticated two-tab check captured five genuine toll postings from a visible ten-row mix without producing invalid-timestamp results. No private live values are included in the repository.
 
@@ -53,12 +57,13 @@ npm test
 npm run check
 ```
 
-The current suite contains 70 tests. Checks cover manifest references, the intended permissions, and JavaScript syntax. Tests use synthetic data and mocked Chrome/DOM interfaces; the separate authenticated smoke check is intentionally not committed as account data.
+The current suite contains 74 tests. Checks cover manifest references, the intended permissions, and JavaScript syntax. Tests use synthetic data and mocked Chrome/DOM interfaces; authenticated smoke-check account data is never committed.
 
 ## Documentation
 
 | Guide | Contents |
 | --- | --- |
+| [Product plan](PROJECT_PLAN.md) | Fleet dashboard, evidence, invoice safeguards, milestones, and acceptance criteria |
 | [Documentation index](Turo%20Invoicer/docs/README.md) | Reading paths and source map |
 | [User guide](Turo%20Invoicer/docs/USER_GUIDE.md) | Installation, sync, mappings, results, clearing data |
 | [Architecture](Turo%20Invoicer/docs/ARCHITECTURE.md) | Execution contexts, SPA waiting, messages, limits |

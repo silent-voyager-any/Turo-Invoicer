@@ -172,6 +172,30 @@ function stableKey(prefix, fields) {
   return `${prefix}:${JSON.stringify(fields)}`;
 }
 
+function localDateAt(epochMs, timeZone) {
+  const parts = partsAt(epochMs, timeZone);
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`;
+}
+
+function assignmentVehicles(toll, assignments, timeZone) {
+  if (!Number.isFinite(toll.timestampMs) || !Array.isArray(assignments)) return [];
+  const date = localDateAt(toll.timestampMs, timeZone);
+  const vehicles = [];
+  for (const assignment of assignments) {
+    if (!assignment || !["tag", "plate"].includes(assignment.kind)) continue;
+    if (assignment.validFrom && date < assignment.validFrom) continue;
+    if (assignment.validTo && date > assignment.validTo) continue;
+    const identifiers = assignment.kind === "tag"
+      ? [toll.tagId, toll.tagOrPlate]
+      : [toll.plate, toll.tagOrPlate];
+    if (identifiers.some((value) => value != null && String(value) === String(assignment.identifier))) {
+      vehicles.push(String(assignment.vehicleId));
+    }
+  }
+  return vehicles;
+}
+
 export function normalizeToll(toll, timeZone = DEFAULT_TIME_ZONE) {
   toll = toll && typeof toll === "object" ? toll : {};
   const timestamp = toll.timestamp ?? toll.transactionTime ?? toll.date;
@@ -237,6 +261,7 @@ export function reconcileTolls(tolls = [], trips = [], options = {}) {
   const graceMs = Math.max(0, Number(options.graceMinutes) || 0) * 60_000;
   const vehicleByTag = options.vehicleByTag || {};
   const vehicleByPlate = options.vehicleByPlate || {};
+  const vehicleAssignments = options.vehicleAssignments || [];
   const normalizedTolls = tolls.map((toll) => normalizeToll(toll, timeZone));
   const normalizedTrips = trips.map((trip) => normalizeTrip(trip, timeZone));
 
@@ -267,7 +292,8 @@ export function reconcileTolls(tolls = [], trips = [], options = {}) {
       toll.tagId && Object.hasOwn(vehicleByTag, toll.tagId) && vehicleByTag[toll.tagId],
       toll.plate && Object.hasOwn(vehicleByPlate, toll.plate) && vehicleByPlate[toll.plate],
       toll.tagOrPlate && Object.hasOwn(vehicleByTag, toll.tagOrPlate) && vehicleByTag[toll.tagOrPlate],
-      toll.tagOrPlate && Object.hasOwn(vehicleByPlate, toll.tagOrPlate) && vehicleByPlate[toll.tagOrPlate]
+      toll.tagOrPlate && Object.hasOwn(vehicleByPlate, toll.tagOrPlate) && vehicleByPlate[toll.tagOrPlate],
+      ...assignmentVehicles(toll, vehicleAssignments, timeZone)
     ].filter(Boolean).map(String);
     if (new Set(identities).size > 1) {
       unmatchedTolls.push({ toll, reason: "conflicting_vehicle_mapping" });

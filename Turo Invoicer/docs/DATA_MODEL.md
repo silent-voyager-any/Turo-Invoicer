@@ -32,18 +32,29 @@ Toll `amount` is USD major units, not cents. Convert a verified integer-cent API
 
 Stable source IDs are preferred. Content caches key records by source ID, or by serialized record when no ID exists. Repeated IDs update a cached record; cancellations remove captured Turo records only when a stable ID is available. Identical-looking transactions without source IDs can collapse. Distinct logical records must not reuse IDs.
 
-## Settings
+## Settings and fleet assignments
 
 ```json
 {
   "timeZone": "America/New_York",
-  "graceMinutes": 0,
-  "vehicleByTag": { "0012345678": "12345" },
-  "vehicleByPlate": { "NY:EXAMPLE": "12345" }
+  "graceMinutes": 0
 }
 ```
 
-The popup JSON uses `tags` and `plates`; popup code maps these to `vehicleByTag` and `vehicleByPlate`. Settings are merged with existing settings by the worker. Mapping values are trimmed, but keys are not normalized. Matching is case-sensitive. The popup has no time-zone picker, though the worker contract validates an IANA zone setting.
+Vehicle-to-transponder relationships are dated fleet records rather than permanent settings:
+
+```json
+{
+  "id": "assignment-example",
+  "vehicleId": "12345",
+  "kind": "tag",
+  "identifier": "0012345678",
+  "validFrom": "2026-01-01",
+  "validTo": "2026-12-31"
+}
+```
+
+`validFrom` and `validTo` are inclusive calendar dates in the configured time zone; an empty bound is open-ended. The worker rejects overlapping assignments for the same identifier and kind when they point to different vehicles. Identifiers and vehicle IDs are compared exactly after trimming. The dashboard autosaves unfinished form values in `uiDrafts` so changing tabs does not erase them.
 
 ## Pure API
 
@@ -58,7 +69,10 @@ const result = reconcileTolls(
   [{ id: "trip-1", vehicleId: "12345",
      start: "2026-09-04 09:00", end: "2026-09-04 18:00" }],
   { timeZone: "America/New_York", graceMinutes: 0,
-    vehicleByTag: { "0012345678": "12345" } }
+    vehicleAssignments: [{
+      id: "assignment-example", vehicleId: "12345", kind: "tag",
+      identifier: "0012345678", validFrom: "2026-01-01", validTo: "2026-12-31"
+    }] }
 );
 
 console.log(result.stats.matchedCount); // 1
@@ -87,7 +101,7 @@ The worker first calls `selectCompletedTrips(trips, { timeZone, nowMs })`, retur
 For each toll:
 
 1. Reject an invalid timestamp or nonpositive/invalid amount into review.
-2. Resolve vehicle identity from direct canonical `vehicleId`, tag mapping, and plate mapping.
+2. Resolve vehicle identity from direct canonical `vehicleId`, active dated tag/plate assignments, and legacy direct mappings when supplied by an external caller.
 3. If multiple supplied identities disagree, report a mapping conflict.
 4. Select valid loaded trips whose intervals contain the toll, including grace on both ends; if identity is known, require the same vehicle ID.
 5. One candidate becomes a suggestion; multiple candidates are ambiguous; zero candidates are unmatched.
@@ -120,20 +134,23 @@ Storage area: `chrome.storage.local`. Key: `turoTollReconcilerState`.
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "sources": {
     "turo": { "records": [], "updatedAt": null },
     "ezpass": { "records": [], "updatedAt": null }
   },
   "settings": {
     "timeZone": "America/New_York",
-    "graceMinutes": 0,
-    "vehicleByTag": {},
-    "vehicleByPlate": {}
+    "graceMinutes": 0
   },
+  "fleet": { "vehicles": [], "assignments": [] },
+  "uiDrafts": { "vehicleAssignment": {} },
+  "invoiceDrafts": [],
+  "evidence": [],
+  "submissionLedger": [],
   "reconciliation": null,
   "lastSync": null
 }
 ```
 
-Successful sync replaces the records/results and sets ISO refresh timestamps. Settings updates recalculate results but retain `lastSync`. Version-1 snapshots are retired rather than reused for history matching; valid manual mappings and supported grace settings are retained. Unknown versions fall back to an empty state. Clearing removes this key and resets settings as well as data.
+Successful sync replaces the records/results and sets ISO refresh timestamps. Settings or fleet updates recalculate results but retain `lastSync`. Schema-2 tag/plate maps migrate to open-ended dated assignments. Version-1 source snapshots are retired rather than reused for history matching, while valid mappings and supported grace settings migrate. Unknown versions fall back to an empty state. Clearing removes this key and resets settings, fleet data, drafts, and source data.

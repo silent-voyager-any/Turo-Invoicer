@@ -27,7 +27,7 @@ Use toll passage/transaction time, not posting date. Check which vehicles and re
 
 ## Sync
 
-Open the extension and click **Sync open tabs**.
+Open the extension, choose **Open fleet dashboard**, and click **Sync portal tabs**. The dashboard is a persistent extension tab, so it remains open while you switch to Turo or E-ZPass.
 
 Turo waits for records containing a vehicle ID and both trip times, up to 20 seconds. A brief settling window groups nearby render updates. An incoming supported network response can also complete collection. E-ZPass also waits up to 20 seconds for supported activity rows or responses. Use its date, plate, and tag filters before syncing.
 
@@ -39,28 +39,19 @@ Both sources must return nonempty supported data. On success, the worker replace
 
 A successful sync means supported loaded records were collected—not that every relevant transaction or reservation was captured.
 
-## Vehicle mappings
+## Fleet assignments
 
-Open **Vehicle mappings**, enter the Turo vehicle ID (from its listing URL), then enter the E-ZPass tag number and/or plate. Click **Save vehicle mapping**. Leading zeros are preserved. Captured vehicle IDs appear as suggestions; before a successful sync you can enter the ID manually. Saving an existing tag/plate updates its assigned vehicle; use **Advanced JSON mappings** to remove entries or edit in bulk.
+In the dashboard, enter a Turo vehicle ID, optional host-facing label, identifier type, and exact E-ZPass tag or plate. Add inclusive effective dates when a tag or plate changes vehicles; leave a boundary empty for an open-ended range. Leading zeros are preserved. Overlapping date ranges for the same identifier are rejected.
 
-Turo is not assumed to provide E-ZPass tag numbers. Copy them from your own E-ZPass records. The alternative advanced JSON format is:
+Turo is not assumed to provide E-ZPass tag numbers. Copy them from your own E-ZPass records. The vehicle value must be the exact Turo vehicle ID, not a vehicle name or E-ZPass internal vehicle ID. The identifier must match the captured tag or plate exactly, including leading zeros, case, and state formatting when supplied.
 
-```json
-{
-  "tags": { "0012345678": "12345" },
-  "plates": { "NY:ABC1234": "12345" }
-}
-```
+Click **Save assignment** to persist it and recalculate the existing snapshot without reloading the portals. A combined Tag/Plate value is resolved through dated assignments only when the resulting vehicle is unique.
 
-The values must be exact Turo vehicle IDs, not vehicle names or E-ZPass internal vehicle IDs. Keys must match captured tags or plates exactly, including leading zeros, case, and state formatting when supplied. Leave a section as an empty object if unused.
-
-Click **Save mappings** to persist mappings and recalculate the existing snapshot without reloading the portals. Each mapping object supports up to 500 entries. A combined Tag/Plate column is preserved as an untyped identifier and resolved only through your explicit tag/plate mappings.
-
-Do not apply one static tag mapping across periods when that tag belonged to different vehicles. Historical assignments are not supported. Conflicting tag and plate mappings are sent for review rather than prioritized silently.
+Create separate non-overlapping dated assignments when a tag belonged to different vehicles. Conflicting tag and plate identities are sent for review rather than prioritized silently.
 
 ## Interpret results
 
-| Popup result | Meaning | Your next action |
+| Dashboard result | Meaning | Your next action |
 | --- | --- | --- |
 | Match suggestion | Exactly one loaded trip qualifies | Verify toll, trip, and completeness manually |
 | Confirm vehicle | Match used time only, without resolved vehicle identity | Establish the correct tag/plate mapping |
@@ -82,7 +73,7 @@ This action does not delete portal records or browser cookies. A later explicit 
 
 ## History-only policy and upgrade
 
-Version 0.2.3 starts Turo collection only on trip history and reads the allowlisted JSON details for numeric reservation links discovered there. The worker additionally excludes trips whose end time is in the future, along with invalid intervals; this also excludes in-progress trips. E-ZPass toll postings accept fractional-second exit times, while credits and other non-toll activity are ignored. Prefetched upcoming trips cannot qualify through grace periods. Reload the extension and both tabs after upgrading. Old version-1 snapshots are not shown, while valid manual mappings are retained for the next sync.
+Version 0.3.0 migrates version-2 tag and plate mappings into open-ended dated fleet assignments. Turo collection remains history-only and excludes future, in-progress, and invalid intervals. E-ZPass toll postings accept fractional-second exit times, while credits and other non-toll activity are ignored. Reload the extension and both tabs after upgrading.
 
 ## Before relying on a suggestion
 

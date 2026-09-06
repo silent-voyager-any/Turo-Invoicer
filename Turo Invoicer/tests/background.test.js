@@ -33,6 +33,7 @@ globalThis.chrome = {
 };
 await import("../background.js");
 const sender = { id: "test-id", url: "chrome-extension://test-id/popup.html" };
+const dashboardSender = { id: "test-id", url: "chrome-extension://test-id/dashboard.html" };
 const call = (message, from = sender) => new Promise((resolve) => listener(message, from, resolve));
 
 test("worker restricts storage and rejects content-script privileged actions", async () => {
@@ -62,7 +63,7 @@ test("failed or multiple-tab collection preserves the prior snapshot", async () 
 test("concurrent sync/settings updates are serialized without lost writes", async () => {
   const results = await Promise.all([
     call({ type: "RUN_SYNC" }),
-    call({ type: "UPDATE_SETTINGS", settings: { graceMinutes: 15, vehicleByTag: { "001": "car1" } } })
+    call({ type: "UPDATE_SETTINGS", settings: { graceMinutes: 15 } })
   ]);
   assert.ok(results.every((result) => result.ok));
   const { state } = await call({ type: "GET_STATE" });
@@ -110,14 +111,32 @@ test("worker rejects other Turo pages and completed snapshots exclude prefetched
     assert.match(result.collection.turo.warning, /excluded/);
   } finally { portalResponses[1].records = original; }
 });
-test("worker invalidates old snapshots but retains manual mappings", async () => {
+test("worker invalidates version-1 snapshots but migrates manual mappings", async () => {
   stored.turoTollReconcilerState = { version: 1, sources: { turo: { records: [{ id: "old" }] } },
     settings: { vehicleByTag: { "001": "car1" }, vehicleByPlate: {}, graceMinutes: 15 } };
   const { state } = await call({ type: "GET_STATE" });
-  assert.equal(state.version, 2);
+  assert.equal(state.version, 3);
   assert.equal(state.sources.turo.records.length, 0);
-  assert.equal(state.settings.vehicleByTag["001"], "car1");
+  assert.deepEqual(state.fleet.assignments.map(({ kind, identifier, vehicleId, validFrom, validTo }) =>
+    ({ kind, identifier, vehicleId, validFrom, validTo })), [
+    { kind: "tag", identifier: "001", vehicleId: "car1", validFrom: null, validTo: null }
+  ]);
   assert.equal(state.lastSync, null);
+});
+test("dashboard drafts persist and dated assignments reject overlapping ownership", async () => {
+  let result = await call({ type: "SAVE_UI_DRAFT", draft: { vehicleId: "car1", kind: "tag", identifier: "002", label: "Car one" } }, dashboardSender);
+  assert.equal(result.state.uiDrafts.vehicleAssignment.identifier, "002");
+  result = await call({ type: "UPSERT_ASSIGNMENT", assignment: {
+    vehicleId: "car1", kind: "tag", identifier: "002", label: "Car one", validFrom: "2026-01-01", validTo: "2026-06-30"
+  } }, dashboardSender);
+  assert.equal(result.ok, true);
+  assert.equal(result.state.uiDrafts.vehicleAssignment.vehicleId, undefined);
+  assert.equal(result.state.fleet.vehicles.find((vehicle) => vehicle.vehicleId === "car1").label, "Car one");
+  const overlap = await call({ type: "UPSERT_ASSIGNMENT", assignment: {
+    vehicleId: "car2", kind: "tag", identifier: "002", validFrom: "2026-06-01", validTo: "2026-12-31"
+  } }, dashboardSender);
+  assert.equal(overlap.ok, false);
+  assert.match(overlap.error, /Overlapping tag/);
 });
 test("worker rejects E-ZPass dashboard pages outside transaction activity", async () => {
   ezpassUrl = "https://www.e-zpassny.com/ezpass/dashboard";

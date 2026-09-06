@@ -40,7 +40,7 @@ Waiting cannot create unavailable fields. A visible skeleton is not a trip recor
 
 ### History cards found, but no complete records
 
-Version 0.2.3 recognizes `baseTripCard` links such as `/us/en/reservation/900001`. A short date label (for example, `Aug 27 - Aug 30`) lacks the year and clocks. Sync derives a fixed same-origin reservation-detail JSON request from each numeric link to obtain these fields instead of extending the wait or guessing values.
+Version 0.3.0 recognizes `baseTripCard` links such as `/us/en/reservation/900001`. A short date label (for example, `Aug 27 - Aug 30`) lacks the year and clocks. Sync derives a fixed same-origin reservation-detail JSON request from each numeric link to obtain these fields instead of extending the wait or guessing values.
 
 - **No supported full timestamps and vehicle ID:** Turo's JSON schema did not contain the required reservation ID, trip boundaries, and vehicle ID. The response shape may need an adapter update; never share an unredacted response.
 - **Malformed/non-JSON, blocked, redirected, or HTTP error:** open Turo and verify your session normally. No challenge bypass or automatic redirect following is attempted.
@@ -52,9 +52,9 @@ Network records take precedence over DOM records. Stale partial network capture 
 
 ## E-ZPass filters and manual tags
 
-Apply the date, plate, and tag filters in the portal yourself, then sync. Version 0.2.3 supports E-ZPass exit times with fractional seconds and converts negative toll-posting debits to positive charge amounts. Adapters support semantic tables, first-row legacy headers, accessible grids, mobile data labels, split date/time columns, and common punctuation/key variants. Credits, payments, replenishments, deposits, refunds, balance adjustments, posting-only rows, and rows without a complete toll time are ignored. These are tested fallbacks, not a guarantee of future private-schema compatibility.
+Apply the date, plate, and tag filters in the portal yourself, then sync. Version 0.3.0 supports E-ZPass exit times with fractional seconds and converts negative toll-posting debits to positive charge amounts. Adapters support semantic tables, first-row legacy headers, accessible grids, mobile data labels, split date/time columns, and common punctuation/key variants. Credits, payments, replenishments, deposits, refunds, balance adjustments, posting-only rows, and rows without a complete toll time are ignored. These are tested fallbacks, not a guarantee of future private-schema compatibility.
 
-If rows remain unsupported, provide only the page path, column headings, and numeric diagnostic counts—never account IDs, cookies, tokens, or raw exports. Enter each car's tag in **Vehicle mappings**; Turo is not assumed to provide E-ZPass tags.
+If rows remain unsupported, provide only the page path, column headings, and numeric diagnostic counts—never account IDs, cookies, tokens, or raw exports. Open the **Fleet dashboard** and add a dated tag or plate assignment for each car; Turo is not assumed to provide E-ZPass tags.
 
 ## Local debugging
 

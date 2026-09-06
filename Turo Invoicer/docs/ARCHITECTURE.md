@@ -11,8 +11,8 @@ Portal's normal authenticated requests
   -> content_common.js + portal adapter (ISOLATED world)
        ^ MutationObserver / DOM fallback
        |
-Popup -- RUN_SYNC --> service worker -- COLLECT_NOW --> each source tab
-Popup <-- results --- service worker <-- records ------- each source tab
+Popup/dashboard -- RUN_SYNC --> service worker -- COLLECT_NOW --> each source tab
+Popup/dashboard <-- results --- service worker <-- records ------- each source tab
                             |
                      reconciler.js
                             |
@@ -57,31 +57,42 @@ Each collection accumulates discovered IDs to tolerate virtualization. Once link
 
 Skeletons alone do not satisfy the wait. Structural completeness does not imply valid dates; the reconciler performs timestamp validation later. Settling does not prove complete pagination. E-ZPass uses the same delayed collection. Route changes clear captures and cancel pending waits.
 
+## Dashboard and fleet state
+
+The popup is a compact launcher and sync status surface. `dashboard.html` is the persistent extension page for reconciliation and fleet configuration. It renders only stored normalized records and sends all writes through the service worker; it does not communicate directly with portal pages.
+
+Fleet assignments associate a Turo vehicle ID with an E-ZPass tag or plate over an inclusive local-date interval. The worker validates dates, rejects overlapping ranges for the same identifier, rebuilds the derived vehicle list, and recalculates reconciliation in its serialized state queue. Unfinished assignment form values are stored separately in `uiDrafts` and restored when the dashboard reopens.
+
+Schema 3 reserves empty `invoiceDrafts`, `evidence`, and `submissionLedger` collections for later milestones. Their presence does not mean capture or submission is available; both remain disabled until their safety contracts and authenticated fixtures are implemented.
+
 ## Internal message reference
 
 These are internal extension messages, not a public web API.
 
 | Sender -> receiver | Type | Request fields | Response fields |
 | --- | --- | --- | --- |
-| Popup -> worker | `GET_STATE` | None | `ok, state` |
-| Popup -> worker | `RUN_SYNC` | None | `ok, synced, state, collection` |
-| Popup -> worker | `UPDATE_SETTINGS` | `settings` | `ok, state` |
-| Popup -> worker | `CLEAR_LOCAL_DATA` | None | `ok, state, resetFailures` |
+| Popup/dashboard -> worker | `GET_STATE` | None | `ok, state` |
+| Popup/dashboard -> worker | `RUN_SYNC` | None | `ok, synced, state, collection` |
+| Dashboard -> worker | `UPDATE_SETTINGS` | `settings` | `ok, state` |
+| Dashboard -> worker | `SAVE_UI_DRAFT` | `draft` | `ok, state` |
+| Dashboard -> worker | `UPSERT_ASSIGNMENT` | `assignment` | `ok, state` |
+| Dashboard -> worker | `DELETE_ASSIGNMENT` | `assignmentId` | `ok, state` |
+| Popup/dashboard -> worker | `CLEAR_LOCAL_DATA` | None | `ok, state, resetFailures` |
 | Worker -> collector | `COLLECT_NOW` | None | `ok, source, records, pagePath, warning`, or error |
 | Worker -> collector | `CLEAR_CAPTURE` | None | `ok` |
 | MAIN -> ISOLATED | `NETWORK_RESPONSE` | `source: "turo-toll-reconciler-page", payload` | No response |
 
 Worker failures use `{ ok: false, error }`. A completed `RUN_SYNC` operation can have `ok: true` with `synced: false`: the operation ran, but source collection failed. Inspect both fields.
 
-Privileged worker operations accept only the extension popup sender, not content-script senders. Collector messages validate extension identity. The page bridge checks origin/source/type, but the host page can forge matching data messages; it is not an authenticated channel.
+Privileged worker operations accept only the exact extension popup or dashboard sender URL, not content-script senders. Collector messages validate extension identity. The page bridge checks origin/source/type, but the host page can forge matching data messages; it is not an authenticated channel.
 
 ## State and concurrency
 
-The worker queues popup operations to serialize read-modify-write state updates. Within one sync, the two tab requests run concurrently. Exactly one matching data-page tab must exist per source; other pages are ignored.
+The worker queues popup/dashboard operations to serialize read-modify-write state updates. Within one sync, the two tab requests run concurrently. Exactly one matching data-page tab must exist per source; other pages are ignored.
 
 The worker allows 25 seconds for either source collection; ordinary tab operations retain 5 seconds. It rechecks the page after collection and filters Turo to valid completed intervals. Both successful nonempty source batches are sanitized, reconciled, and saved together in one storage item. A source error preserves the previous snapshot. This is not a cross-portal transactional snapshot or a completeness guarantee.
 
-Updates to settings recalculate the current records without changing the source refresh times. Schema 2 retires pre-history snapshots while retaining valid legacy vehicle mappings. Timeout diagnostics contain only DOM-candidate and JSON-response counts. On worker restart, persisted state is reloaded. Pending work is not resumable across arbitrary worker/browser termination; retry sync if interrupted.
+Updates to settings or fleet assignments recalculate the current records without changing the source refresh times. Schema 3 migrates valid legacy vehicle mappings to open-ended dated assignments and preserves verified schema-2 source snapshots. Timeout diagnostics contain only DOM-candidate and JSON-response counts. On worker restart, persisted state is reloaded. Pending work is not resumable across arbitrary worker/browser termination; retry sync if interrupted.
 
 ## Limits
 
@@ -94,8 +105,8 @@ Updates to settings recalculate the current records without changing the source 
 | Detail response | 2,000,000-byte JSON limit; root plus explicit response-envelope candidates only |
 | JSON text/published serialization | 2,000,000 JavaScript characters |
 | Stored scalar strings | At most 250 characters |
-| Mapping entries | 500 per tag map and per plate map |
-| Mapping key/value length | At most 100 characters |
+| Fleet assignments | 1,000 dated assignments |
+| Assignment identifier/value length | At most 100 characters |
 | Worker grace validation | 0–120 finite minutes; popup offers 0/15/30/60 |
 
 Oversized network responses are silently ignored. Record/node-cap warnings can be displayed; depth truncation and every other omission are not individually surfaced. XHR JSON is already materialized by the browser before its serialized-size check. These limits reduce workload; they do not establish an overall memory bound or complete ingestion.

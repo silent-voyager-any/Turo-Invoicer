@@ -1,6 +1,6 @@
 # Project documentation
 
-This reference describes version 0.2.3, including authenticated same-origin Turo JSON detail reads, completed-trip filtering, E-ZPass toll-posting normalization, and manual vehicle mappings. Last reviewed: September 5, 2026.
+This reference describes version 0.3.0, including the persistent fleet dashboard, dated vehicle assignments, authenticated same-origin Turo detail reads, completed-trip filtering, and E-ZPass normalization. Last reviewed: September 6, 2026.
 
 ## Reading paths
 
@@ -28,8 +28,8 @@ Paths below are relative to the extension directory.
 
 ## Implementation versus roadmap
 
-Implemented: passive capture on the exact history/transactions pages, explicit-sync JSON reads for history-linked reservations, completed-trip filtering, local suggestions, manual static vehicle mappings, safe ambiguity handling, bounded SPA waiting for both portals, and local clearing.
+Implemented: passive capture on the exact history/transactions pages, explicit-sync JSON reads for history-linked reservations, completed-trip filtering, local suggestions, a persistent dashboard, autosaved fleet drafts, dated tag/plate assignments, safe ambiguity handling, bounded SPA waiting, and local clearing.
 
-Not implemented: verified portal API contracts, automatic pagination, CSV/PDF import/export, invoice generation, claim submission, historical tag assignment, account identity verification, completeness certification, automatic retention expiry, backend services, licensing/billing, or a packaged Chrome Web Store release.
+Not implemented: automatic pagination, screenshot evidence storage, invoice generation/submission, account identity verification, completeness certification, backend services, licensing/billing, or a packaged Chrome Web Store release. These remain gated in the root `PROJECT_PLAN.md`.
 
 The project name does not imply those missing invoicing capabilities exist. Use the source and tests as the implementation reference; treat portal selectors as adapters to validate, not guaranteed contracts.

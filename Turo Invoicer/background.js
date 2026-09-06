@@ -5,6 +5,7 @@ const PATTERNS = { turo: ["https://turo.com/*"], ezpass: ["https://www.e-zpassny
 const MAX_RECORDS = 5000;
 const HISTORY_PATH = "/us/en/trips/history";
 const TRANSACTIONS_PATH = "/ezpass/dashboard/transactions";
+const TRUSTED_PAGES = new Set(["popup.html", "dashboard.html"]);
 const isTransactionsUrl = (url) => {
   try {
     const parsed = new URL(url);
@@ -21,14 +22,19 @@ const isHistoryUrl = (url) => {
 let operations = Promise.resolve();
 
 const emptyState = () => ({
-  version: 2,
+  version: 3,
   sources: {
     turo: { records: [], updatedAt: null },
     ezpass: { records: [], updatedAt: null }
   },
   settings: {
-    timeZone: DEFAULT_TIME_ZONE, graceMinutes: 0, vehicleByTag: {}, vehicleByPlate: {}
+    timeZone: DEFAULT_TIME_ZONE, graceMinutes: 0
   },
+  fleet: { vehicles: [], assignments: [] },
+  uiDrafts: { vehicleAssignment: {} },
+  invoiceDrafts: [],
+  evidence: [],
+  submissionLedger: [],
   reconciliation: null,
   lastSync: null
 });
@@ -38,18 +44,30 @@ const storageReady = chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED
 async function getState() {
   await storageReady;
   const stored = (await chrome.storage.local.get(STORAGE_KEY))[STORAGE_KEY];
-  if (stored?.version === 2) return stored;
+  if (stored?.version === 3) return stored;
   const fresh = emptyState();
-  if (stored?.version === 1) {
-    // Retire pre-history snapshots, but preserve valid user vehicle mappings.
+  if ([1, 2].includes(stored?.version)) {
+    // Version 2 keeps its verified history snapshot; version 1 retires its old
+    // pre-history records. Both migrate flat mappings to dated assignments.
+    if (stored.version === 2) {
+      fresh.sources = stored.sources || fresh.sources;
+      fresh.lastSync = stored.lastSync || null;
+    }
+    fresh.settings.timeZone = stored.settings?.timeZone || DEFAULT_TIME_ZONE;
+    fresh.settings.graceMinutes = [0, 15, 30, 60].includes(stored.settings?.graceMinutes) ? stored.settings.graceMinutes : 0;
     try {
-      fresh.settings = {
-        ...fresh.settings,
-        vehicleByTag: cleanMapping(stored.settings?.vehicleByTag || {}),
-        vehicleByPlate: cleanMapping(stored.settings?.vehicleByPlate || {}),
-        graceMinutes: [0, 15, 30, 60].includes(stored.settings?.graceMinutes) ? stored.settings.graceMinutes : 0
-      };
-    } catch { /* Invalid legacy settings fall back to defaults. */ }
+      const legacy = [];
+      for (const [kind, values] of [["tag", cleanMapping(stored.settings?.vehicleByTag || {})], ["plate", cleanMapping(stored.settings?.vehicleByPlate || {})]]) {
+        for (const [identifier, vehicleId] of Object.entries(values)) legacy.push({
+          id: `legacy:${kind}:${identifier}`, kind, identifier, vehicleId, label: "", validFrom: null, validTo: null
+        });
+      }
+      fresh.fleet.assignments = legacy;
+      fresh.fleet.vehicles = [...new Set([
+        ...(fresh.sources.turo?.records || []).map((trip) => String(trip.vehicleId || "")), ...legacy.map((item) => item.vehicleId)
+      ].filter(Boolean))].map((vehicleId) => ({ vehicleId, label: "" }));
+    } catch { /* Invalid legacy mappings fall back to an empty fleet. */ }
+    return reconcile(fresh);
   }
   return fresh;
 }
@@ -63,7 +81,9 @@ async function save(state) {
 function reconcile(state) {
   const { completed } = selectCompletedTrips(state.sources.turo.records, { timeZone: state.settings.timeZone });
   state.reconciliation = reconcileTolls(
-    state.sources.ezpass.records, completed, state.settings
+    state.sources.ezpass.records, completed, {
+      ...state.settings, vehicleAssignments: state.fleet?.assignments || []
+    }
   );
   return state;
 }
@@ -181,6 +201,55 @@ function cleanMapping(raw) {
   return Object.fromEntries(entries.map(([key, value]) => [key, value.trim()]));
 }
 
+function cleanDate(value, label) {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error(`${label} must be a calendar date.`);
+  const [year, month, day] = value.split("-").map(Number);
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (check.getUTCFullYear() !== year || check.getUTCMonth() + 1 !== month || check.getUTCDate() !== day) {
+    throw new Error(`${label} must be a valid calendar date.`);
+  }
+  return value;
+}
+
+function cleanAssignment(raw, existingId = null) {
+  if (!raw || typeof raw !== "object") throw new Error("Invalid vehicle assignment.");
+  const kind = raw.kind;
+  const identifier = typeof raw.identifier === "string" ? raw.identifier.trim() : "";
+  const vehicleId = typeof raw.vehicleId === "string" ? raw.vehicleId.trim() : "";
+  const label = typeof raw.label === "string" ? raw.label.trim() : "";
+  if (!["tag", "plate"].includes(kind) || !identifier || identifier.length > 100 || !vehicleId || vehicleId.length > 100 || label.length > 100) {
+    throw new Error("Assignment requires a vehicle, tag or plate, and valid values.");
+  }
+  const validFrom = cleanDate(raw.validFrom, "Start date");
+  const validTo = cleanDate(raw.validTo, "End date");
+  if (validFrom && validTo && validFrom > validTo) throw new Error("End date cannot precede start date.");
+  return { id: existingId || crypto.randomUUID(), kind, identifier, vehicleId, label, validFrom, validTo };
+}
+
+function rangesOverlap(left, right) {
+  return (left.validFrom || "0000-00-00") <= (right.validTo || "9999-99-99") &&
+    (right.validFrom || "0000-00-00") <= (left.validTo || "9999-99-99");
+}
+
+function assertNoAssignmentOverlap(assignments) {
+  for (let index = 0; index < assignments.length; index++) {
+    for (let other = index + 1; other < assignments.length; other++) {
+      const left = assignments[index], right = assignments[other];
+      if (left.kind === right.kind && left.identifier === right.identifier && rangesOverlap(left, right)) {
+        throw new Error(`Overlapping ${left.kind} assignments are not allowed.`);
+      }
+    }
+  }
+}
+
+function rebuildVehicles(state) {
+  const labels = new Map((state.fleet?.vehicles || []).map((vehicle) => [String(vehicle.vehicleId), String(vehicle.label || "")]));
+  for (const assignment of state.fleet.assignments) if (assignment.label) labels.set(assignment.vehicleId, assignment.label);
+  for (const trip of state.sources.turo.records) if (!labels.has(String(trip.vehicleId))) labels.set(String(trip.vehicleId), "");
+  state.fleet.vehicles = [...labels].map(([vehicleId, label]) => ({ vehicleId, label }));
+}
+
 async function clearData() {
   const resets = await Promise.all(Object.values(PATTERNS).map(async (url) => {
     const tabs = await chrome.tabs.query({ url });
@@ -199,15 +268,49 @@ async function handle(message) {
     case "UPDATE_SETTINGS": {
       const state = await getState();
       const supplied = message.settings || {};
+      if ("vehicleByTag" in supplied || "vehicleByPlate" in supplied) {
+        throw new Error("Use dated fleet assignments instead of legacy mapping objects.");
+      }
       const timeZone = supplied.timeZone ?? state.settings.timeZone;
       new Intl.DateTimeFormat("en-US", { timeZone }).format();
       const graceMinutes = supplied.graceMinutes ?? state.settings.graceMinutes;
       if (!Number.isFinite(graceMinutes) || graceMinutes < 0 || graceMinutes > 120) throw new Error("Grace period must be 0–120 minutes.");
       state.settings = {
-        timeZone, graceMinutes,
-        vehicleByTag: cleanMapping(supplied.vehicleByTag ?? state.settings.vehicleByTag),
-        vehicleByPlate: cleanMapping(supplied.vehicleByPlate ?? state.settings.vehicleByPlate)
+        timeZone, graceMinutes
       };
+      return { state: await save(reconcile(state)) };
+    }
+    case "SAVE_UI_DRAFT": {
+      const state = await getState();
+      const draft = message.draft || {};
+      state.uiDrafts.vehicleAssignment = {
+        vehicleId: String(draft.vehicleId || "").slice(0, 100),
+        label: String(draft.label || "").slice(0, 100),
+        kind: ["tag", "plate"].includes(draft.kind) ? draft.kind : "tag",
+        identifier: String(draft.identifier || "").slice(0, 100),
+        validFrom: String(draft.validFrom || "").slice(0, 10),
+        validTo: String(draft.validTo || "").slice(0, 10)
+      };
+      return { state: await save(state) };
+    }
+    case "UPSERT_ASSIGNMENT": {
+      const state = await getState();
+      const existing = message.assignment?.id && state.fleet.assignments.find((item) => item.id === message.assignment.id);
+      const assignment = cleanAssignment(message.assignment, existing?.id || null);
+      if (!existing && state.fleet.assignments.length >= 1000) throw new Error("Fleet assignment limit reached.");
+      const assignments = existing
+        ? state.fleet.assignments.map((item) => item.id === existing.id ? assignment : item)
+        : [...state.fleet.assignments, assignment];
+      assertNoAssignmentOverlap(assignments);
+      state.fleet.assignments = assignments;
+      state.uiDrafts.vehicleAssignment = {};
+      rebuildVehicles(state);
+      return { state: await save(reconcile(state)) };
+    }
+    case "DELETE_ASSIGNMENT": {
+      const state = await getState();
+      state.fleet.assignments = state.fleet.assignments.filter((item) => item.id !== message.id);
+      rebuildVehicles(state);
       return { state: await save(reconcile(state)) };
     }
     default: throw new Error("Unknown extension operation.");
@@ -215,8 +318,9 @@ async function handle(message) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Only our popup can request privileged operations, not a content script.
-  if (sender.id !== chrome.runtime.id || sender.tab || sender.url !== chrome.runtime.getURL("popup.html")) {
+  // Only our exact extension UI pages can request privileged operations.
+  const trustedPage = [...TRUSTED_PAGES].some((page) => sender.url === chrome.runtime.getURL(page));
+  if (sender.id !== chrome.runtime.id || sender.tab || !trustedPage) {
     sendResponse({ ok: false, error: "Untrusted sender." });
     return false;
   }

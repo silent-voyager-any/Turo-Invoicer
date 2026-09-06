@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Turo Invoicer Dashboard</title>
+    <link rel="stylesheet" href="dashboard.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div><p class="eyebrow">LOCAL FLEET WORKSPACE</p><h1>Turo toll dashboard</h1></div>
+      <div class="top-actions"><span id="statusDot" class="status-dot"></span><button id="syncButton" class="primary">Sync portal tabs</button></div>
+    </header>
+    <main>
+      <p id="status" class="status" role="status" aria-live="polite">Loading…</p>
+      <section class="metrics" aria-label="Saved records">
+        <article><span>Turo history</span><strong id="tripCount">0</strong></article>
+        <article><span>E-ZPass tolls</span><strong id="tollCount">0</strong></article>
+        <article><span>Suggestions</span><strong id="matchedCount">0</strong></article>
+        <article><span>Needs review</span><strong id="unmatchedCount">0</strong></article>
+      </section>
+      <div class="layout">
+        <section class="panel">
+          <p class="eyebrow">FLEET</p><h2>Dated tag and plate assignments</h2>
+          <p class="help">Your unfinished entry is saved automatically. Dates are inclusive in America/New_York; leave either date empty for an open-ended assignment.</p>
+          <form id="assignmentForm">
+            <label>Turo vehicle ID<input id="vehicleId" list="vehicleOptions" maxlength="100" required /></label><datalist id="vehicleOptions"></datalist>
+            <label>Vehicle label (optional)<input id="vehicleLabel" maxlength="100" placeholder="Example: BMW X1 — black" /></label>
+            <label>Identifier type<select id="identifierKind"><option value="tag">E-ZPass tag</option><option value="plate">License plate</option></select></label>
+            <label>Tag or plate<input id="identifier" maxlength="100" required placeholder="Leading zeros are preserved" /></label>
+            <div class="date-grid"><label>Effective from<input id="validFrom" type="date" /></label><label>Effective through<input id="validTo" type="date" /></label></div>
+            <button class="primary" type="submit">Save assignment</button>
+          </form>
+          <div id="assignmentList" class="stack"></div>
+        </section>
+        <section class="panel">
+          <div class="panel-heading"><div><p class="eyebrow">MATCHING</p><h2>Trip suggestions</h2></div><label>Grace period<select id="graceMinutes"><option value="0">None</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">1 hour</option></select></label></div>
+          <h3>Matched</h3><div id="matchedList" class="stack empty">No matches yet.</div>
+          <h3>Needs review</h3><div id="unmatchedList" class="stack empty">No unmatched tolls.</div>
+        </section>
+      </div>
+      <section class="panel roadmap"><p class="eyebrow">INVOICE SAFETY GATE</p><h2>Evidence and batch submission</h2><p>The fleet dashboard and dated matching model are active. Screenshot capture and Turo submission remain disabled until their local evidence store, duplicate ledger, and authenticated DOM fixtures pass the milestones in the repository’s PROJECT_PLAN.md.</p></section>
+      <footer><span id="lastSync">Never synced</span><button id="clearButton" class="text-button">Clear local data</button></footer>
+    </main>
+    <script src="dashboard.js" type="module"></script>
+  </body>
+</html>
