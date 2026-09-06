@@ -19,7 +19,7 @@ Examples are synthetic. A source adapter must translate its verified schema into
 }
 ```
 
-Toll `amount` is USD major units, not cents. Convert a verified integer-cent API field in its adapter; do not guess units. The E-ZPass adapter deliberately emits no Turo `vehicleId`, because agency IDs use a different namespace. Optional `tagOrPlate` preserves a mixed-column identifier without guessing its type. Explicit mappings in either namespace can resolve it; conflicts require review.
+Toll `amount` is USD major units, not cents. Convert a verified integer-cent API field in its adapter; do not guess units. E-ZPass displays toll postings as negative account debits; normalization converts verified toll postings to a positive charge magnitude after the adapter removes credits and other non-toll activity. The E-ZPass adapter deliberately emits no Turo `vehicleId`, because agency IDs use a different namespace. Optional `tagOrPlate` preserves a mixed-column identifier without guessing its type. Explicit mappings in either namespace can resolve it; conflicts require review.
 
 ```json
 {
@@ -70,7 +70,7 @@ Exports: `DEFAULT_TIME_ZONE`, `toEpochMs`, `normalizeAmount`, `normalizeToll`, `
 ## Time normalization
 
 - ISO date/time with `Z` or numeric offset preserves the instant.
-- Zone-less numeric ISO-like and US date/time strings use the configured zone, not the machine zone.
+- Zone-less numeric ISO-like and US date/time strings use the configured zone, not the machine zone. Seconds may include one to three fractional digits.
 - Numeric epochs with absolute value below 100,000,000,000 are interpreted as seconds; larger values are milliseconds. Numeric strings must contain exactly 10 or 13 digits. Prefer explicit ISO offsets for adapters.
 - US two-digit years use 1970–1999 for 70–99 and 2000–2069 for 00–69; four-digit years are preferable.
 - Date-only values, unsupported month-name strings, invalid calendars, and invalid times return `null`.

@@ -1,6 +1,6 @@
 # Project documentation
 
-This reference describes version 0.2.2, including authenticated same-origin Turo JSON detail reads, completed-trip filtering, E-ZPass waiting, and manual vehicle mappings. Last reviewed: September 5, 2026.
+This reference describes version 0.2.3, including authenticated same-origin Turo JSON detail reads, completed-trip filtering, E-ZPass toll-posting normalization, and manual vehicle mappings. Last reviewed: September 5, 2026.
 
 ## Reading paths
 

@@ -21,6 +21,8 @@ test("rejects date-only, invalid calendar, unsupported and malformed times", () 
   }
 });
 test("accepts seconds/milliseconds and rejects out-of-range epochs", () => {
+  assert.equal(toEpochMs("09/05/2026 13:11:16.090"), Date.parse("2026-09-05T17:11:16.090Z"));
+  assert.equal(toEpochMs("09/05/2026 1:11:16.9 PM"), Date.parse("2026-09-05T17:11:16.900Z"));
   assert.equal(toEpochMs(1782921600), 1782921600000);
   assert.equal(toEpochMs("1782921600000"), 1782921600000);
   assert.equal(toEpochMs(1e20), null);
@@ -59,7 +61,7 @@ test("grace periods are opt-in and flagged", () => {
   assert.equal(reconcileTolls([early], [trip], { graceMinutes: 15 }).matched[0].withinGrace, true);
 });
 test("invalid trips and nonpositive/invalid amounts do not match", () => {
-  const result = reconcileTolls([{ ...toll, amount: "N/A" }, { ...toll, amount: -2 }], [trip, { ...trip, end: "bad" }]);
+  const result = reconcileTolls([{ ...toll, amount: "N/A" }, { ...toll, amount: 0 }], [trip, { ...trip, end: "bad" }]);
   assert.equal(result.matched.length, 0);
   assert.equal(result.invalidTrips.length, 1);
   assert.equal(result.unmatchedTolls.length, 2);
@@ -68,6 +70,12 @@ test("does not mutate inputs", () => {
   const original = JSON.stringify({ toll, trip });
   reconcileTolls([toll], [trip]);
   assert.equal(JSON.stringify({ toll, trip }), original);
+});
+test("normalizes E-ZPass debit signs to a positive charge before matching", () => {
+  const result = reconcileTolls([{ ...toll, amount: "-$6.94" }], [trip]);
+  assert.equal(result.matched.length, 1);
+  assert.equal(result.matched[0].toll.amount, 6.94);
+  assert.equal(result.matched[0].toll.amountCents, 694);
 });
 
 test("history excludes future, in-progress, and invalid trips using normalized timestamps", () => {

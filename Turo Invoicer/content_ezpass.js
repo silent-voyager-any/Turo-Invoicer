@@ -2,10 +2,18 @@
   "use strict";
   const { scalar, pick, timestamp, textOf, tableValues, createCapture } = TollCapture;
   const TRANSACTIONS_PATH = "/ezpass/dashboard/transactions";
+  const NON_TOLL_ACTIVITY = /\b(?:credit|payment|replenish(?:ment)?|deposit|refund|balance|adjust(?:ment)?)\b/i;
+
+  function hasCompleteInstant(value) {
+    if (typeof value === "number") return Number.isFinite(value);
+    if (typeof value !== "string") return false;
+    const text = value.trim();
+    return /^\d{10}$|^\d{13}$/.test(text) || /(?:T|\s)\d{1,2}:\d{2}/.test(text);
+  }
 
   function parseToll(value) {
-    const type = scalar(pick(value, ["transactionType", "activityType", "type"]));
-    if (type && /payment|replenish|deposit|balance/i.test(String(type))) return null;
+    const activity = scalar(pick(value, ["activity", "transactionType", "activityType", "type"]));
+    if (activity && NON_TOLL_ACTIVITY.test(String(activity))) return null;
     // Exit/passage/transaction time is usable; posting dates are not.
     const time = timestamp(value,
       ["timestamp", "transactionDateTime", "transactionTimestamp", "txnDateTime",
@@ -16,14 +24,14 @@
     const plazaValue = pick(value, ["exitPlazaName", "exitPlaza", "plaza", "plazaName",
       "plazaLocation", "tollPlaza", "facilityName", "facility", "location", "entryPlaza"]);
     const plaza = scalar(plazaValue) ?? scalar(pick(plazaValue, ["name", "description", "code"]));
-    const amount = scalar(pick(value, ["tollAmount", "transactionAmount", "amount", "chargeAmount", "charge", "fare"]));
-    if (time == null || plaza == null || amount == null) return null;
+    const amount = scalar(pick(value, ["displayAmount", "tollAmount", "transactionAmount", "amount", "chargeAmount", "charge", "fare"]));
+    if (!hasCompleteInstant(time) || plaza == null || amount == null) return null;
     return {
       id: scalar(pick(value, ["transactionId", "txnId", "transactionNumber", "referenceNumber", "id"])),
       timestamp: time, plaza: String(plaza), amount,
       tagId: scalar(pick(value, ["tagId", "tagNumber", "transponderId", "transponderNumber"])),
       plate: scalar(pick(value, ["licensePlate", "plateNumber", "plate"])),
-      tagOrPlate: scalar(pick(value, ["tagOrPlate", "tagPlateNumber", "tagPlate"])),
+      tagOrPlate: scalar(pick(value, ["tagOrPlateNumber", "tagOrPlate", "tagPlateNumber", "tagPlate"])),
       vehicleId: null // An E-ZPass vehicle ID is not a Turo vehicle ID.
     };
   }
@@ -45,7 +53,7 @@
         /^txn date (?:and )?time$/, /^toll date (?:and )?time$/, /^date (?:and )?time$/
       ]);
       const tagged = cell([/^tag plate(?: number| no)?$/]);
-      const type = cell([/^transaction type$/, /^activity type$/, /^type$/]);
+      const type = cell([/^activity$/, /^transaction type$/, /^activity type$/, /^type$/]);
       add({
         transactionId: row.dataset.transactionId || cell([/^transaction (?:id|number|no)$/, /^reference(?: number)?$/]),
         timestamp: row.dataset.timestamp || explicitDateTime ||
@@ -64,7 +72,7 @@
         // resolve only via an explicit user mapping, without guessing its type.
         tagOrPlate: tagged,
         plate: row.dataset.plate || cell([/^license plate(?: number)?$/, /^plate(?: number| no)?$/]),
-        transactionType: type
+        activity: type
       });
     }
   }
@@ -75,6 +83,6 @@
     waitTimeoutMs: 20000,
     settleMs: 300,
     observeThrottleMs: 100,
-    emptyMessage: "Timed out after 20 seconds waiting for E-ZPass transactions. Open transaction activity and apply a date range. If rows are visible, report only the page path and column headings (no account data) so unsupported fields can be mapped."
+    emptyMessage: "Timed out after 20 seconds waiting for complete E-ZPass toll postings. Credits and other non-toll activity are ignored; a toll must include an exit/transaction date, time, plaza, and amount. Apply a date range, then reload the page and retry."
   });
 })();

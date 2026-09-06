@@ -4,7 +4,7 @@ A local-first Chrome extension that helps Turo hosts reconcile NY E-ZPass toll a
 
 The extension observes data loaded in your signed-in browser tabs, matches toll timestamps to trip intervals, and presents suggestions for review. It does not require a server, store portal passwords, or submit reimbursement claims.
 
-> **Status: development scaffold, version 0.2.2.** Automated tests cover matching, extraction adapters, messaging, and SPA waiting. The Turo reservation-detail response shape has been inspected in an authenticated browser, but full end-to-end portal operation still requires validation. Do not treat suggestions as verified billing evidence.
+> **Status: development scaffold, version 0.2.3.** Automated tests cover matching, extraction adapters, messaging, and SPA waiting. The current Turo and E-ZPass response shapes have been exercised in an authenticated two-tab sync, but portal completeness and future schema compatibility are not guaranteed. Do not treat suggestions as verified billing evidence.
 
 ## Features
 
@@ -12,14 +12,18 @@ The extension observes data loaded in your signed-in browser tabs, matches toll 
 - Local fetch/XHR response observation and defensive DOM fallbacks.
 - History-only Turo collection excludes upcoming and in-progress trips.
 - Both portal collectors wait up to 20 seconds for usable records.
-- E-ZPass table/grid fallbacks and manual per-vehicle tag entry.
+- E-ZPass toll-posting capture, credit filtering, table/grid fallbacks, and manual per-vehicle tag entry.
 - America/New_York time normalization, including daylight-saving ambiguity detection.
 - Inclusive trip-window matching with optional grace periods.
 - Tag/plate-to-Turo-vehicle mappings and explicit overlap/conflict review.
 - Local snapshots, atomic two-source sync, and a clear-data control.
 - No backend uploads, analytics, remote scripts, or automatic claim submission.
 
-## Version 0.2.2 update
+## Version 0.2.3 update
+
+E-ZPass transaction responses can provide separate exit dates and 24-hour exit times containing milliseconds. Version 0.2.3 recognizes those fields, ignores credits and other non-toll account activity, and converts negative account debits to positive toll-charge amounts for reconciliation. The authenticated two-tab check captured five genuine toll postings from a visible ten-row mix without producing invalid-timestamp results. No private live values are included in the repository.
+
+The version 0.2.2 Turo behavior remains in place:
 
 History cards such as `baseTripCard` can show only month/day dates and a vehicle name. During explicit sync, the extension now converts those numeric reservation links into narrowly allowlisted, same-origin JSON detail requests. It reads the endpoint's epoch trip boundaries and stable vehicle ID, never guessing a year, time, or ID from the card label. Reads are bounded and cancelled on navigation; malformed, redirected, oversized, signed-out, and unsupported responses preserve prior results. No new permissions are needed.
 
@@ -49,7 +53,7 @@ npm test
 npm run check
 ```
 
-The current suite contains 67 tests. Checks cover manifest references, the intended permissions, and JavaScript syntax. Tests use synthetic data and mocked Chrome/DOM interfaces; they are not authenticated browser tests.
+The current suite contains 70 tests. Checks cover manifest references, the intended permissions, and JavaScript syntax. Tests use synthetic data and mocked Chrome/DOM interfaces; the separate authenticated smoke check is intentionally not committed as account data.
 
 ## Documentation
 

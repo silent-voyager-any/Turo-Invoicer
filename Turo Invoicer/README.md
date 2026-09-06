@@ -10,7 +10,7 @@ This directory is the runnable Chrome Manifest V3 extension. Select this folder,
 4. Select **Sync open tabs** in the popup. Both collectors can take up to 20 seconds. Only completed Turo trips qualify.
 5. Review suggestions and use the manual vehicle-ID/tag/plate form before relying on a result.
 
-Version 0.2.2 uses read-only JSON detail requests for numeric reservation links discovered in loaded Turo history cards. Sync uses your existing browser session without reading credentials. It prefers the endpoint's epoch trip boundaries and stable vehicle ID; short date labels are never guessed. Unsupported or invalid detail responses preserve prior results and show an actionable error. Reload the extension and both portal tabs after updating.
+Version 0.2.3 supports the authenticated E-ZPass transaction shape, including millisecond exit times and debit-formatted toll charges. Credits and other non-toll account activity are ignored. Turo still uses read-only JSON detail requests for numeric reservation links discovered in loaded history cards. Sync uses your existing browser session without reading credentials. Reload the extension and both portal tabs after updating.
 
 No package installation or build is needed. Development checks, from this directory:
 

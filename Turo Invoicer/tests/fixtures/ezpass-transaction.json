@@ -1,0 +1,13 @@
+{
+  "syntheticRedactedFixture": true,
+  "transaction": {
+    "activity": "TOLL POSTING",
+    "exitDate": "09/05/2026",
+    "exitTime": "13:11:16.090",
+    "exitPlaza": "EXAMPLE PLAZA",
+    "displayAmount": "-$4.19",
+    "tagOrPlateNumber": "0000000000",
+    "status": "POSTED",
+    "unrelatedPrivateField": "must not persist"
+  }
+}

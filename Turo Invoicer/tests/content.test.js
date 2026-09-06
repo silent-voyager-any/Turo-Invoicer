@@ -57,6 +57,31 @@ test("E-ZPass rejects posting dates and non-scalar amounts", () => {
   assert.equal(parse({ postedAt: "2026-07-01T12:00Z", plaza: "Lincoln", amount: 10 }), null);
   assert.equal(parse({ timestamp: "2026-07-01T12:00Z", plaza: "Lincoln", amount: {} }), null);
 });
+test("E-ZPass parses the redacted live response shape and discards unrelated fields", () => {
+  const { parse } = adapter("content_ezpass.js");
+  const fixture = JSON.parse(readFileSync("tests/fixtures/ezpass-transaction.json", "utf8"));
+  const record = parse(fixture.transaction);
+  assert.deepEqual(JSON.parse(JSON.stringify(record)), {
+    id: null,
+    timestamp: "09/05/2026 13:11:16.090",
+    plaza: "EXAMPLE PLAZA",
+    amount: "-$4.19",
+    tagId: null,
+    plate: null,
+    tagOrPlate: "0000000000",
+    vehicleId: null
+  });
+  assert.equal(record.unrelatedPrivateField, undefined);
+});
+test("E-ZPass excludes non-toll activity and incomplete toll instants", () => {
+  const { parse } = adapter("content_ezpass.js");
+  const base = { exitDate: "09/05/2026", exitTime: "13:11:16.090", exitPlaza: "EXAMPLE", displayAmount: "-$4.19" };
+  for (const activity of ["NTOL CREDIT", "PAYMENT", "REPLENISHMENT", "DEPOSIT", "REFUND", "BALANCE ADJUSTMENT"]) {
+    assert.equal(parse({ ...base, activity }), null, activity);
+  }
+  assert.equal(parse({ ...base, activity: "TOLL POSTING", exitTime: undefined }), null);
+  assert.ok(parse({ ...base, activity: "TOLL POSTING" }));
+});
 test("Turo adapter keeps epochs, requires vehicle ID, and signals cancellations", () => {
   const { parse } = adapter("content_turo.js");
   assert.equal(parse({ id: "1", startTime: 1782921600, endTime: 1782925200, vehicle: { id: 20 } }).start, 1782921600);

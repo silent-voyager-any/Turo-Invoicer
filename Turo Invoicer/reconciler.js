@@ -74,13 +74,13 @@ function localPartsFromString(value) {
 
   // Common US statement format: MM/DD/YYYY hh:mm[:ss] AM/PM.
   match = normalized.match(
-    /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})(?:,?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?)?$/i
+    /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})(?:,?\s+(\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?\s*(AM|PM)?)?$/i
   );
   if (match) {
     let year = Number(match[3]);
     if (year < 100) year += year >= 70 ? 1900 : 2000;
     let hour = Number(match[4] || 0);
-    const meridiem = match[7]?.toUpperCase();
+    const meridiem = match[8]?.toUpperCase();
     if (meridiem && (hour < 1 || hour > 12)) return null;
     if (meridiem === "PM" && hour < 12) hour += 12;
     if (meridiem === "AM" && hour === 12) hour = 0;
@@ -91,7 +91,7 @@ function localPartsFromString(value) {
       hour,
       minute: Number(match[5] || 0),
       second: Number(match[6] || 0),
-      millisecond: 0
+      millisecond: Number((match[7] || "0").padEnd(3, "0"))
     };
   }
 
@@ -177,7 +177,10 @@ export function normalizeToll(toll, timeZone = DEFAULT_TIME_ZONE) {
   const timestamp = toll.timestamp ?? toll.transactionTime ?? toll.date;
   const timestampMs = toEpochMs(timestamp, timeZone);
   const plaza = String(toll.plaza ?? toll.location ?? "Unknown plaza").trim();
-  const amount = normalizeAmount(toll.amount);
+  const parsedAmount = normalizeAmount(toll.amount);
+  // E-ZPass displays toll postings as account debits. Once the source adapter
+  // has removed credits and other non-toll activity, reconcile by charge size.
+  const amount = parsedAmount == null ? null : Math.abs(parsedAmount);
   return {
     id: toll.id || stableKey("toll", [timestampMs, plaza, amount, toll.tagId, toll.plate, toll.tagOrPlate]),
     timestamp,

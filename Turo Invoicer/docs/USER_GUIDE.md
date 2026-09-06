@@ -82,7 +82,7 @@ This action does not delete portal records or browser cookies. A later explicit 
 
 ## History-only policy and upgrade
 
-Version 0.2.2 starts Turo collection only on trip history and reads the allowlisted JSON details for numeric reservation links discovered there. The worker additionally excludes trips whose end time is in the future, along with invalid intervals; this also excludes in-progress trips. Prefetched upcoming trips cannot qualify through grace periods. Reload the extension and both tabs after upgrading. Old version-1 snapshots are not shown, while valid manual mappings are retained for the next sync.
+Version 0.2.3 starts Turo collection only on trip history and reads the allowlisted JSON details for numeric reservation links discovered there. The worker additionally excludes trips whose end time is in the future, along with invalid intervals; this also excludes in-progress trips. E-ZPass toll postings accept fractional-second exit times, while credits and other non-toll activity are ignored. Prefetched upcoming trips cannot qualify through grace periods. Reload the extension and both tabs after upgrading. Old version-1 snapshots are not shown, while valid manual mappings are retained for the next sync.
 
 ## Before relying on a suggestion
 
