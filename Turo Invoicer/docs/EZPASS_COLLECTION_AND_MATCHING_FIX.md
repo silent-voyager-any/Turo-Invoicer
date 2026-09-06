@@ -1,12 +1,12 @@
 # E-ZPass Complete Collection and Matching Fix
 
-Target release: **0.4.2**
+Target release: **0.4.3**
 
 ## Summary
 
 Live inspection showed that the E-ZPass transaction view can contain dozens of pages. Version 0.4.1 captures only the currently rendered page, so recent tolls can be compared with older Turo trips while the relevant E-ZPass pages are never loaded. Identifier mapping can therefore be correct while every toll still reports that no trip is in range.
 
-Version 0.4.2 collects Turo first, derives the required Transaction Date range from completed trips, applies that range through the signed-in E-ZPass page, and walks every result page. Collection is complete only after the portal exposes a disabled Next control (or explicitly reports an empty range).
+Version 0.4.3 collects Turo first, derives the required Transaction Date range from completed trips, applies that range through the signed-in E-ZPass page, and walks every result page. Collection is complete only after the portal exposes a disabled Next control (or explicitly reports an empty range). A collector revision handshake prevents a stale injected content script from being mistaken for the current build.
 
 ## Collection contract
 

@@ -6,6 +6,7 @@ const PATTERNS = { turo: ["https://turo.com/*"], ezpass: ["https://www.e-zpassny
 const MAX_RECORDS = 5000;
 const HISTORY_PATH = "/us/en/trips/history";
 const TRANSACTIONS_PATH = "/ezpass/dashboard/transactions";
+const EZPASS_COLLECTOR_REVISION = "0.4.3-search-scope-1";
 const TRUSTED_PAGES = new Set(["popup.html", "dashboard.html"]);
 const isTransactionsUrl = (url) => {
   try {
@@ -178,10 +179,13 @@ async function collect(source, request = {}) {
   }
   try {
     // Turo detail reads share its 20s content deadline; allow 5s for the reply.
-    const response = await tabRequest(tabs[0].id, {
-      type: "COLLECT_NOW", ...(source === "ezpass" ? { range: request.range } : {})
-    }, source === "ezpass" ? 125000 : 25000);
-    if (response?.source !== source || !response.ok) throw new Error(response?.error || "Unexpected portal response.");
+      const response = await tabRequest(tabs[0].id, {
+        type: "COLLECT_NOW", ...(source === "ezpass" ? { range: request.range } : {})
+      }, source === "ezpass" ? 125000 : 25000);
+      if (source === "ezpass" && response?.collectorRevision !== EZPASS_COLLECTOR_REVISION) {
+        throw new Error("The E-ZPass tab is running an older extension script. Reload that transactions tab, then sync again.");
+      }
+      if (response?.source !== source || !response.ok) throw new Error(response?.error || "Unexpected portal response.");
     if (source === "turo" && response.pagePath !== HISTORY_PATH) throw new Error("Reload the extension and Turo history tab; the history-only collector is not active.");
     if (source === "ezpass" && response.pagePath !== TRANSACTIONS_PATH) throw new Error("Reload the extension and E-ZPass transactions tab; the transactions collector is not active.");
     const current = (await chrome.tabs.query({ url: PATTERNS[source] })).find((tab) => tab.id === tabs[0].id);

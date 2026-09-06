@@ -222,24 +222,28 @@
         options.enrichment?.reset();
         reply({ ok: true });
       } else if (message?.type === "COLLECT_NOW") {
+        const collectReply = (value) => reply({
+          ...value,
+          ...(options.collectorRevision ? { collectorRevision: options.collectorRevision } : {})
+        });
         if (!checkPage()) {
-          reply({ ok: false, source, error: options.pageMessage || "Open the supported data page and sync again." });
+          collectReply({ ok: false, source, error: options.pageMessage || "Open the supported data page and sync again." });
           return false;
         }
         paused = false;
         if (typeof options.collect === "function" && message.range) {
           Promise.resolve(options.collect({ range: message.range, parseRecord, readDom }))
-            .then((result) => reply({ ok: true, source, pagePath: capturePath, ...result }))
-            .catch((error) => reply({ ok: false, source, error: error?.message || "Portal collection failed." }));
+            .then((result) => collectReply({ ok: true, source, pagePath: capturePath, ...result }))
+            .catch((error) => collectReply({ ok: false, source, error: error?.message || "Portal collection failed." }));
           return true;
         }
         extractDom();
         if (waitTimeoutMs) {
-          waitForRecords(reply);
+          waitForRecords(collectReply);
           return true; // Required for asynchronous sendResponse in Chrome MV3.
         }
         // API and DOM representations are not combined to avoid double-counting.
-        reply(snapshot());
+        collectReply(snapshot());
       } else return false;
       return false;
     });
