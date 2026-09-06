@@ -73,7 +73,7 @@ This action does not delete portal records or browser cookies. A later explicit 
 
 ## History-only policy and upgrade
 
-Version 0.4.3 groups uniquely vehicle-confirmed tolls beneath completed-trip drafts and shows every unresolved toll once under **Needs review**. Mapped tolls outside completed trips appear as **Personal/unassigned**. E-ZPass displays complete range and page diagnostics; Turo pagination and invoice-status blockers remain separate and can still prevent batching. Reload the extension and both tabs after upgrading; the dashboard now identifies an E-ZPass tab that retained an older injected collector.
+Version 0.4.4 groups uniquely vehicle-confirmed tolls beneath completed-trip drafts and shows every unresolved toll once under **Needs review**. Mapped tolls outside completed trips appear as **Personal/unassigned**. E-ZPass automatically commits its masked date fields and displays complete range and page diagnostics; Turo pagination and invoice-status blockers remain separate and can still prevent batching. Reload the extension and both tabs after upgrading.
 
 ## Before relying on a suggestion
 

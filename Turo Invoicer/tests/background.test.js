@@ -12,7 +12,7 @@ let turoUrl = "https://turo.com/us/en/trips/history";
 let ezpassUrl = "https://www.e-zpassny.com/ezpass/dashboard/transactions";
 const portalResponses = {
   1: { ok: true, source: "turo", pagePath: "/us/en/trips/history", records: [{ id: "trip1", vehicleId: "car1", start: "2026-07-01 09:00", end: "2026-07-01 18:00", vehicleLabel: "Example car", vehiclePlate: "NY:ABC-123", guestName: "Synthetic private field" }] },
-  2: { ok: true, source: "ezpass", collectorRevision: "0.4.3-search-scope-1", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, accountNumber: "Synthetic private field" }] }
+  2: { ok: true, source: "ezpass", collectorRevision: "0.4.4-date-hydration-1", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, accountNumber: "Synthetic private field" }] }
 };
 globalThis.chrome = {
   runtime: { id: "test-id", getURL: (file) => "chrome-extension://test-id/" + file,

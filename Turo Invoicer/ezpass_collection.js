@@ -78,10 +78,23 @@
     return visibleOnly ? inputs.filter(isVisible) : inputs;
   }
 
+  function dateInputHint(input) {
+    const labels = [...(input?.labels || [])].map(normalizedText).join(" ");
+    return [input?.getAttribute?.("aria-label"), input?.getAttribute?.("name"),
+      input?.getAttribute?.("id"), labels].filter(Boolean).join(" ");
+  }
+
+  function orderDateInputs(inputs) {
+    if (inputs.length !== 2) return inputs;
+    const start = inputs.filter((input) => /(?:start.*date|date.*start)/i.test(dateInputHint(input)));
+    const end = inputs.filter((input) => /(?:end.*date|date.*end)/i.test(dateInputHint(input)));
+    return start.length === 1 && end.length === 1 && start[0] !== end[0] ? [start[0], end[0]] : inputs;
+  }
+
   function requireVisibleDateInputs() {
     const inputs = dateInputs(true);
     if (inputs.length !== 2) throw new Error(`Expected exactly two visible E-ZPass date inputs; found ${inputs.length}.`);
-    return inputs;
+    return orderDateInputs(inputs);
   }
 
   function commonAncestor(left, right) {
@@ -111,12 +124,65 @@
     throw new Error("E-ZPass transaction-filter Search control was not found in the date-filter region.");
   }
 
-  function setInput(input, value) {
+  function nativeInputSetter(input) {
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
     if (!setter) throw new Error("E-ZPass date input is not editable.");
-    setter.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return setter;
+  }
+
+  function dispatchInputEvent(input, type, init = {}) {
+    let event;
+    try {
+      event = type === "input" || type === "beforeinput"
+        ? new InputEvent(type, { bubbles: true, cancelable: type === "beforeinput", ...init })
+        : type.startsWith("key")
+          ? new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init })
+          : new Event(type, { bubbles: true, ...init });
+    } catch {
+      event = new Event(type, { bubbles: true, cancelable: type === "beforeinput" });
+    }
+    input.dispatchEvent(event);
+  }
+
+  const normalizedDateDigits = (value) => String(value || "").replace(/\D/g, "");
+  async function commitDateInput(input, value) {
+    const setter = nativeInputSetter(input);
+    input.focus?.();
+    input.setSelectionRange?.(0, String(input.value || "").length);
+    dispatchInputEvent(input, "beforeinput", { inputType: "deleteContentBackward", data: null });
+    setter.call(input, "");
+    dispatchInputEvent(input, "input", { inputType: "deleteContentBackward", data: null });
+    let typed = "";
+    for (const character of value) {
+      dispatchInputEvent(input, "keydown", { key: character });
+      dispatchInputEvent(input, "keypress", { key: character });
+      dispatchInputEvent(input, "beforeinput", { inputType: "insertText", data: character });
+      typed += character;
+      setter.call(input, typed);
+      dispatchInputEvent(input, "input", { inputType: "insertText", data: character });
+      dispatchInputEvent(input, "keyup", { key: character });
+      await Promise.resolve();
+    }
+    dispatchInputEvent(input, "change");
+    input.blur?.();
+    await sleep(0);
+    const accepted = normalizedDateDigits(input.value) === normalizedDateDigits(value) && input.checkValidity?.() !== false;
+    if (!accepted) throw new Error(`E-ZPass rejected a requested date. Diagnostics: ${controlDiagnostics([input])}`);
+    return true;
+  }
+
+  function controlDiagnostics(inputs, search = null) {
+    const fields = inputs.map((input) => ({
+      type: String(input?.getAttribute?.("type") || input?.type || "text").slice(0, 20),
+      format: /mm\/dd\/yy/i.test(input?.getAttribute?.("placeholder") || "") ? "MM/DD/YY" : "unknown",
+      accepted: normalizedDateDigits(input?.value).length === 6,
+      valid: input?.checkValidity?.() !== false
+    }));
+    const searchState = search ? {
+      disabledProperty: Boolean(search.disabled),
+      ariaDisabled: search.getAttribute?.("aria-disabled") === "true"
+    } : { found: false };
+    return JSON.stringify({ fields, search: searchState });
   }
 
   const currentPath = () => new URL(location.href).pathname.replace(/\/$/, "");
@@ -185,15 +251,26 @@
         return found.length === 2 ? found : null;
       }, 3000, "E-ZPass date filter controls were not found.");
     } else inputs = requireVisibleDateInputs();
-    setInput(inputs[0], portalDate(range.startDate));
-    setInput(inputs[1], portalDate(range.endDate));
-    const search = await waitFor(() => {
-      try { return filterSearchButton(inputs); }
-      catch (error) {
-        if (/disabled/.test(error.message)) return null;
-        throw error;
-      }
-    }, 3000, "E-ZPass did not enable its Search control for the requested dates.");
+    inputs = orderDateInputs(inputs);
+    await commitDateInput(inputs[0], portalDate(range.startDate));
+    await commitDateInput(inputs[1], portalDate(range.endDate));
+    let search;
+    try {
+      search = await waitFor(() => {
+        try { return filterSearchButton(inputs); }
+        catch (error) {
+          if (/disabled/.test(error.message)) return null;
+          throw error;
+        }
+      }, 5000, "E-ZPass did not enable its Search control for the requested dates.");
+    } catch (error) {
+      let candidate = null;
+      try {
+        candidate = buttons(commonAncestor(inputs[0], inputs[1]) || transactionMain())
+          .find((node) => isVisible(node) && /^search$/i.test(normalizedText(node))) || null;
+      } catch { /* Diagnostics must not mask the collection failure. */ }
+      throw new Error(`${error.message} Diagnostics: ${controlDiagnostics(inputs, candidate)}`);
+    }
     search.click();
     assertRoute("transaction-filter search");
     return settledPage(readDom, parseRecord, null, range);
@@ -249,7 +326,8 @@
 
   globalThis.EzpassCollection = Object.freeze({
     validateRange, chunkDateRange, portalDate, collect,
-    testing: Object.freeze({ uniqueVisibleButton, requireVisibleDateInputs, filterSearchButton, assertRoute }),
+    testing: Object.freeze({ uniqueVisibleButton, requireVisibleDateInputs, orderDateInputs,
+      filterSearchButton, commitDateInput, controlDiagnostics, assertRoute }),
     constants: Object.freeze({ CHUNK_DAYS, MAX_TOTAL_PAGES, MAX_PAGES_PER_CHUNK })
   });
 })();

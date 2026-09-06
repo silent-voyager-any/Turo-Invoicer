@@ -42,7 +42,7 @@ function adapter(file) {
 
 test("E-ZPass adapter combines transaction date/time and discards extra fields", () => {
   const { parse, options } = adapter("content_ezpass.js");
-  assert.equal(options.collectorRevision, "0.4.3-search-scope-1");
+  assert.equal(options.collectorRevision, "0.4.4-date-hydration-1");
   const record = parse({
     transactionId: "1", transactionDate: "07/01/2026", transactionTime: "12:30 PM",
     plazaName: "Lincoln", amount: "$15.00", tagNumber: "00123", vehicleId: "agency-only-id",

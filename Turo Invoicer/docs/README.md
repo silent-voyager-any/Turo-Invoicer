@@ -1,6 +1,6 @@
 # Project documentation
 
-This reference describes version 0.4.3, including vehicle cards, canonical tag/plate matching, the trip-centric dashboard, schema-4 drafts and selections, authenticated same-origin Turo detail reads, completed-trip filtering, complete range-aware E-ZPass pagination, and stale collector detection. Last reviewed: September 6, 2026.
+This reference describes version 0.4.4, including vehicle cards, canonical tag/plate matching, the trip-centric dashboard, schema-4 drafts and selections, authenticated same-origin Turo detail reads, completed-trip filtering, masked E-ZPass date-input hydration, complete range-aware pagination, and stale collector detection. Last reviewed: September 6, 2026.
 
 ## Reading paths
 

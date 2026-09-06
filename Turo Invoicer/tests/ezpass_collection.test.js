@@ -4,9 +4,19 @@ import vm from "node:vm";
 import { readFileSync } from "node:fs";
 
 const baseDocument = { querySelectorAll: () => [], querySelector: () => null, body: { innerText: "", querySelectorAll: () => [] } };
+class FakeEvent {
+  constructor(type, init = {}) { this.type = type; Object.assign(this, init); }
+}
+class FakeInputElement {}
+Object.defineProperty(FakeInputElement.prototype, "value", {
+  configurable: true,
+  get() { return this._value || ""; },
+  set(value) { this._value = String(value); }
+});
 const context = vm.createContext({
   Date, URL, location: { href: "https://www.e-zpassny.com/ezpass/dashboard/transactions" },
-  document: baseDocument,
+  document: baseDocument, Event: FakeEvent, InputEvent: FakeEvent, KeyboardEvent: FakeEvent,
+  HTMLInputElement: FakeInputElement,
   setTimeout, clearTimeout
 });
 vm.runInContext(readFileSync("ezpass_collection.js", "utf8"), context);
@@ -31,15 +41,21 @@ test("splits large ranges into inclusive, nonoverlapping 14-day chunks", () => {
   ]);
 });
 
-function domNode({ tag = "div", text = "", attributes = {}, visible = true, disabled = false } = {}) {
+function domNode({ tag = "div", text = "", attributes = {}, visible = true, disabled = false, onEvent = null } = {}) {
   const node = {
     tag, ownText: text, attributes, visible, disabled, hidden: false, parentElement: null, children: [], clicks: 0,
+    events: [], focused: false,
     append(...children) { for (const child of children) { child.parentElement = this; this.children.push(child); } },
     get textContent() { return [this.ownText, ...this.children.map((child) => child.textContent)].filter(Boolean).join(" "); },
     getAttribute(name) { return this.attributes[name] ?? null; },
     getClientRects() { return this.visible ? [{}] : []; },
     get offsetParent() { return this.visible ? {} : null; },
     click() { this.clicks += 1; },
+    focus() { this.focused = true; },
+    blur() { this.focused = false; },
+    setSelectionRange() {},
+    checkValidity() { return this.attributes.valid !== false; },
+    dispatchEvent(event) { this.events.push(event); onEvent?.(event, this); return true; },
     querySelectorAll(selector) {
       const descendants = this.children.flatMap((child) => [child, ...child.querySelectorAll("*")]);
       if (selector === "*") return descendants;
@@ -51,6 +67,7 @@ function domNode({ tag = "div", text = "", attributes = {}, visible = true, disa
       return [];
     }
   };
+  if (tag === "input") Object.setPrototypeOf(node, FakeInputElement.prototype);
   return node;
 }
 
@@ -109,6 +126,46 @@ test("recognizes an input-based transaction Search control", () => {
   fixture.panel.append(inputSearch);
   const search = api.testing.filterSearchButton(api.testing.requireVisibleDateInputs());
   assert.equal(search, inputSearch);
+});
+
+test("orders date controls semantically and falls back to verified DOM order", () => {
+  const fixture = filterFixture();
+  const reversed = [fixture.inputs[1], fixture.inputs[0]];
+  let ordered = api.testing.orderDateInputs(reversed);
+  assert.equal(ordered[0], fixture.inputs[0]);
+  assert.equal(ordered[1], fixture.inputs[1]);
+  fixture.inputs.forEach((input) => { input.attributes["aria-label"] = "Date"; });
+  ordered = api.testing.orderDateInputs(reversed);
+  assert.equal(ordered[0], reversed[0]);
+  assert.equal(ordered[1], reversed[1]);
+});
+
+test("hydrates masked date inputs with typing events before Search enables", async () => {
+  const fixture = filterFixture({ searchDisabled: true });
+  const enableWhenReady = (event) => {
+    if (event.type === "keyup" && fixture.inputs.every((input) => String(input.value).replace(/\D/g, "").length === 6)) {
+      fixture.searches[0].disabled = false;
+    }
+  };
+  fixture.inputs.forEach((input) => { input.dispatchEvent = (event) => {
+    input.events.push(event); enableWhenReady(event); return true;
+  }; });
+  await api.testing.commitDateInput(fixture.inputs[0], "08/01/26");
+  assert.equal(fixture.searches[0].disabled, true);
+  await api.testing.commitDateInput(fixture.inputs[1], "08/14/26");
+  assert.equal(fixture.searches[0].disabled, false);
+  assert.ok(fixture.inputs[0].events.some((event) => event.type === "beforeinput"));
+  assert.ok(fixture.inputs[0].events.some((event) => event.type === "keyup"));
+  assert.equal(api.testing.filterSearchButton(fixture.inputs), fixture.searches[0]);
+});
+
+test("rejects a date value the portal mask does not accept and emits sanitized diagnostics", async () => {
+  const fixture = filterFixture();
+  Object.defineProperty(fixture.inputs[0], "value", { configurable: true, get: () => "", set() {} });
+  await assert.rejects(api.testing.commitDateInput(fixture.inputs[0], "08/01/26"),
+    /rejected a requested date.*"accepted":false.*"valid":true/);
+  const diagnostics = api.testing.controlDiagnostics(fixture.inputs, fixture.searches[0]);
+  assert.doesNotMatch(diagnostics, /08\/01\/26/);
 });
 
 test("rejects missing, hidden, disabled, duplicate, and structurally unsupported filter Search controls", () => {
