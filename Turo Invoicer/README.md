@@ -7,10 +7,10 @@ This directory is the runnable Chrome Manifest V3 extension. Select this folder,
 1. Use Chrome 111+ and enable Developer mode at `chrome://extensions`.
 2. Load this directory, then reload your signed-in portal tabs.
 3. Keep one Turo tab and one E-ZPass NY tab open. Open `/us/en/trips/history` and `/ezpass/dashboard/transactions`, then apply the intended activity filters.
-4. Select **Sync open tabs** in the popup. Both collectors can take up to 20 seconds. Only completed Turo trips qualify.
-5. Review suggestions and use the manual vehicle-ID/tag/plate form before relying on a result.
+4. Open the fleet dashboard from the popup, then select **Sync portal tabs**. Both collectors can take up to 20 seconds. Only completed Turo trips qualify.
+5. Review suggestions and use the dashboard's dated vehicle-ID/tag/plate form before relying on a result.
 
-Version 0.3.0 adds a persistent fleet dashboard with autosaved unfinished vehicle input and dated tag/plate assignments. The toolbar popup is now a compact launcher. Evidence capture and invoice submission remain disabled until the safeguards in the repository’s `PROJECT_PLAN.md` are implemented. The authenticated E-ZPass adapter and read-only Turo detail collection remain in place. Reload the extension and both portal tabs after updating.
+Version 0.3.1 fixes service-worker authorization for the persistent dashboard when Chrome opens it in a normal extension tab. The autosaved fleet input, dated tag/plate assignments, authenticated E-ZPass adapter, and read-only Turo detail collection remain in place. Evidence capture and invoice submission remain disabled until the safeguards in the repository’s `PROJECT_PLAN.md` are implemented. Reload the extension and both portal tabs after updating.
 
 No package installation or build is needed. Development checks, from this directory:
 

@@ -33,12 +33,26 @@ globalThis.chrome = {
 };
 await import("../background.js");
 const sender = { id: "test-id", url: "chrome-extension://test-id/popup.html" };
-const dashboardSender = { id: "test-id", url: "chrome-extension://test-id/dashboard.html" };
+const dashboardSender = {
+  id: "test-id",
+  url: "chrome-extension://test-id/dashboard.html",
+  tab: { id: 9, url: "chrome-extension://test-id/dashboard.html" }
+};
 const call = (message, from = sender) => new Promise((resolve) => listener(message, from, resolve));
 
-test("worker restricts storage and rejects content-script privileged actions", async () => {
+test("worker trusts exact extension UI pages and rejects all other senders", async () => {
   assert.equal(accessLevel, "TRUSTED_CONTEXTS");
-  assert.equal((await call({ type: "RUN_SYNC" }, { ...sender, tab: { id: 1 } })).ok, false);
+  assert.equal((await call({ type: "GET_STATE" })).ok, true);
+  assert.equal((await call({ type: "GET_STATE" }, dashboardSender)).ok, true);
+  assert.equal((await call({ type: "GET_STATE" }, {
+    id: "test-id", url: "https://turo.com/us/en/trips/history", tab: { id: 1 }
+  })).ok, false);
+  assert.equal((await call({ type: "GET_STATE" }, {
+    id: "test-id", url: "chrome-extension://test-id/options.html", tab: { id: 10 }
+  })).ok, false);
+  assert.equal((await call({ type: "GET_STATE" }, {
+    id: "foreign-id", url: "chrome-extension://test-id/dashboard.html", tab: { id: 11 }
+  })).ok, false);
 });
 test("worker collects both sources atomically and strips extra fields", async () => {
   const result = await call({ type: "RUN_SYNC" });

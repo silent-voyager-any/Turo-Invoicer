@@ -84,7 +84,7 @@ These are internal extension messages, not a public web API.
 
 Worker failures use `{ ok: false, error }`. A completed `RUN_SYNC` operation can have `ok: true` with `synced: false`: the operation ran, but source collection failed. Inspect both fields.
 
-Privileged worker operations accept only the exact extension popup or dashboard sender URL, not content-script senders. Collector messages validate extension identity. The page bridge checks origin/source/type, but the host page can forge matching data messages; it is not an authenticated channel.
+Privileged worker operations accept only the exact extension popup or dashboard sender URL, not content-script senders. The dashboard is expected to have `sender.tab` because it is a full extension tab; trust is derived from the Chrome-supplied extension ID and exact extension-page URL, not from the absence of a tab. Collector messages validate extension identity. The page bridge checks origin/source/type, but the host page can forge matching data messages; it is not an authenticated channel.
 
 ## State and concurrency
 

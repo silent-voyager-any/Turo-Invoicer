@@ -1,6 +1,6 @@
 # Project documentation
 
-This reference describes version 0.3.0, including the persistent fleet dashboard, dated vehicle assignments, authenticated same-origin Turo detail reads, completed-trip filtering, and E-ZPass normalization. Last reviewed: September 6, 2026.
+This reference describes version 0.3.1, including the persistent fleet dashboard, dated vehicle assignments, authenticated same-origin Turo detail reads, completed-trip filtering, and E-ZPass normalization. Last reviewed: September 6, 2026.
 
 ## Reading paths
 

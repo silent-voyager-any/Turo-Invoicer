@@ -4,7 +4,7 @@ A local-first Chrome extension that helps Turo hosts reconcile NY E-ZPass toll a
 
 The extension observes data loaded in your signed-in browser tabs, matches toll timestamps to trip intervals, and presents suggestions for review. It does not require a server, store portal passwords, or submit reimbursement claims.
 
-> **Status: development scaffold, version 0.3.0.** The persistent fleet dashboard and dated vehicle assignments are implemented. Evidence capture and Turo invoice submission remain safety-gated milestones. Current portal response shapes have been exercised in an authenticated two-tab sync, but completeness and future schema compatibility are not guaranteed.
+> **Status: development scaffold, version 0.3.1.** The persistent fleet dashboard and dated vehicle assignments are implemented. Evidence capture and Turo invoice submission remain safety-gated milestones. Current portal response shapes have been exercised in an authenticated two-tab sync, but completeness and future schema compatibility are not guaranteed.
 
 ## Features
 
@@ -19,9 +19,9 @@ The extension observes data loaded in your signed-in browser tabs, matches toll 
 - Local snapshots, atomic two-source sync, and a clear-data control.
 - No backend uploads, analytics, remote scripts, or automatic claim submission.
 
-## Version 0.3.0 update
+## Version 0.3.1 update
 
-The toolbar popup now opens a persistent dashboard, so switching to a portal no longer destroys unfinished vehicle text. Fleet mappings support inclusive effective date ranges for tag transfers and multiple cars. Version-2 mappings migrate to open-ended dated assignments, and conflicting assignment ranges fail closed. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the evidence and reviewed batch-submission roadmap.
+The dashboard now authenticates correctly when Chrome opens it as a normal extension tab. The persistent dashboard, autosaved unfinished vehicle text, and dated fleet assignments introduced in 0.3.0 remain unchanged. Version-2 mappings migrate to open-ended dated assignments, and conflicting assignment ranges fail closed. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the evidence and reviewed batch-submission roadmap.
 
 The version 0.2.3 E-ZPass behavior remains in place:
 
@@ -31,7 +31,7 @@ The version 0.2.2 Turo behavior remains in place:
 
 History cards such as `baseTripCard` can show only month/day dates and a vehicle name. During explicit sync, the extension now converts those numeric reservation links into narrowly allowlisted, same-origin JSON detail requests. It reads the endpoint's epoch trip boundaries and stable vehicle ID, never guessing a year, time, or ID from the card label. Reads are bounded and cancelled on navigation; malformed, redirected, oversized, signed-out, and unsupported responses preserve prior results. No new permissions are needed.
 
-Sync starts only from `https://turo.com/us/en/trips/history` and `https://www.e-zpassny.com/ezpass/dashboard/transactions`; only history-linked Turo details may be read additionally. Use the E-ZPass portal's date, plate, and tag filters yourself. The popup provides manual vehicle-ID/tag/plate entry; Turo is not assumed to expose transponder numbers. Old pre-history snapshots are retired while valid vehicle mappings are retained. Reload the extension and both tabs after updating.
+Sync starts only from `https://turo.com/us/en/trips/history` and `https://www.e-zpassny.com/ezpass/dashboard/transactions`; only history-linked Turo details may be read additionally. Use the E-ZPass portal's date, plate, and tag filters yourself. The dashboard provides manual dated vehicle-ID/tag/plate entry; Turo is not assumed to expose transponder numbers. Old pre-history snapshots are retired while valid vehicle mappings are retained. Reload the extension and both tabs after updating.
 
 ## Quick start
 

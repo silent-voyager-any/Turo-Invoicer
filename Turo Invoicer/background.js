@@ -320,7 +320,7 @@ async function handle(message) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Only our exact extension UI pages can request privileged operations.
   const trustedPage = [...TRUSTED_PAGES].some((page) => sender.url === chrome.runtime.getURL(page));
-  if (sender.id !== chrome.runtime.id || sender.tab || !trustedPage) {
+  if (sender.id !== chrome.runtime.id || !trustedPage) {
     sendResponse({ ok: false, error: "Untrusted sender." });
     return false;
   }

@@ -73,7 +73,7 @@ This action does not delete portal records or browser cookies. A later explicit 
 
 ## History-only policy and upgrade
 
-Version 0.3.0 migrates version-2 tag and plate mappings into open-ended dated fleet assignments. Turo collection remains history-only and excludes future, in-progress, and invalid intervals. E-ZPass toll postings accept fractional-second exit times, while credits and other non-toll activity are ignored. Reload the extension and both tabs after upgrading.
+Version 0.3.1 fixes dashboard communication when the dashboard is open as a normal Chrome tab and retains the schema-3 migration introduced in 0.3.0. Turo collection remains history-only and excludes future, in-progress, and invalid intervals. E-ZPass toll postings accept fractional-second exit times, while credits and other non-toll activity are ignored. Reload the extension and both tabs after upgrading.
 
 ## Before relying on a suggestion
 
