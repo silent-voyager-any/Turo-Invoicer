@@ -10,7 +10,7 @@ This directory is the runnable Chrome Manifest V3 extension. Select this folder,
 4. Open the fleet dashboard from the popup, then select **Sync portal tabs**. Both collectors can take up to 20 seconds. Only completed Turo trips qualify.
 5. Review suggestions and use the dashboard's dated vehicle-ID/tag/plate form before relying on a result.
 
-Version 0.3.1 fixes service-worker authorization for the persistent dashboard when Chrome opens it in a normal extension tab. The autosaved fleet input, dated tag/plate assignments, authenticated E-ZPass adapter, and read-only Turo detail collection remain in place. Evidence capture and invoice submission remain disabled until the safeguards in the repository’s `PROJECT_PLAN.md` are implemented. Reload the extension and both portal tabs after updating.
+Version 0.4.0 adds a four-page fleet workspace and one draft per completed trip. Uniquely vehicle-confirmed tolls are nested beneath their trip and can be selected individually; ready trips support persistent multi-selection and exact totals. Current-page captures are explicitly marked incomplete, and unknown Turo invoice states remain blocked. Automatic pagination, evidence, and submission are not yet enabled. Reload the extension and both portal tabs after updating.
 
 No package installation or build is needed. Development checks, from this directory:
 

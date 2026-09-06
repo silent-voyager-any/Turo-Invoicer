@@ -134,7 +134,7 @@ Storage area: `chrome.storage.local`. Key: `turoTollReconcilerState`.
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "sources": {
     "turo": { "records": [], "updatedAt": null },
     "ezpass": { "records": [], "updatedAt": null }
@@ -145,7 +145,13 @@ Storage area: `chrome.storage.local`. Key: `turoTollReconcilerState`.
   },
   "fleet": { "vehicles": [], "assignments": [] },
   "uiDrafts": { "vehicleAssignment": {} },
+  "collectionRuns": {
+    "turo": { "complete": false, "pageCount": 0, "recordCount": 0 },
+    "ezpass": { "complete": false, "pageCount": 0, "recordCount": 0 }
+  },
+  "tripEligibility": {},
   "invoiceDrafts": [],
+  "selectionSummary": { "tripCount": 0, "tollCount": 0, "totalCents": 0 },
   "evidence": [],
   "submissionLedger": [],
   "reconciliation": null,
@@ -153,4 +159,4 @@ Storage area: `chrome.storage.local`. Key: `turoTollReconcilerState`.
 }
 ```
 
-Successful sync replaces the records/results and sets ISO refresh timestamps. Settings or fleet updates recalculate results but retain `lastSync`. Schema-2 tag/plate maps migrate to open-ended dated assignments. Version-1 source snapshots are retired rather than reused for history matching, while valid mappings and supported grace settings migrate. Unknown versions fall back to an empty state. Clearing removes this key and resets settings, fleet data, drafts, and source data.
+Successful sync replaces the records/results and sets ISO refresh timestamps. Schema 4 derives one draft per completed trip, nests only uniquely vehicle-confirmed tolls, preserves explicit selections, and records source completeness separately from record counts. Schema-3 source records and fleet assignments migrate without data loss but remain incomplete and `status_unknown` until verified by future complete adapters. Clearing removes this key and resets settings, fleet data, drafts, and source data.

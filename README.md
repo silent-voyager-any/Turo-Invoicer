@@ -4,7 +4,7 @@ A local-first Chrome extension that helps Turo hosts reconcile NY E-ZPass toll a
 
 The extension observes data loaded in your signed-in browser tabs, matches toll timestamps to trip intervals, and presents suggestions for review. It does not require a server, store portal passwords, or submit reimbursement claims.
 
-> **Status: development scaffold, version 0.3.1.** The persistent fleet dashboard and dated vehicle assignments are implemented. Evidence capture and Turo invoice submission remain safety-gated milestones. Current portal response shapes have been exercised in an authenticated two-tab sync, but completeness and future schema compatibility are not guaranteed.
+> **Status: development scaffold, version 0.4.0.** The dashboard now groups confirmed toll matches beneath individual completed trips and provides persistent toll/trip selection. Complete pagination, Turo invoice-status verification, evidence capture, and invoice submission remain safety-gated milestones.
 
 ## Features
 
@@ -19,9 +19,9 @@ The extension observes data loaded in your signed-in browser tabs, matches toll 
 - Local snapshots, atomic two-source sync, and a clear-data control.
 - No backend uploads, analytics, remote scripts, or automatic claim submission.
 
-## Version 0.3.1 update
+## Version 0.4.0 update
 
-The dashboard now authenticates correctly when Chrome opens it as a normal extension tab. The persistent dashboard, autosaved unfinished vehicle text, and dated fleet assignments introduced in 0.3.0 remain unchanged. Version-2 mappings migrate to open-ended dated assignments, and conflicting assignment ranges fail closed. See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the evidence and reviewed batch-submission roadmap.
+The dashboard now has Vehicles, Trips, Needs review, and Batch pages. Every completed Turo record becomes one trip draft; uniquely time-and-vehicle-confirmed tolls appear under that trip with persistent toll and trip selections and integer-cent totals. Schema 4 preserves existing fleet data while marking legacy/current-page collections incomplete and unknown Turo invoice states unselectable. See [TRIP_BATCH_WORKFLOW.md](TRIP_BATCH_WORKFLOW.md) for the remaining authenticated adapter, evidence, and submission work.
 
 The version 0.2.3 E-ZPass behavior remains in place:
 
@@ -57,7 +57,7 @@ npm test
 npm run check
 ```
 
-The current suite contains 74 tests. Checks cover manifest references, the intended permissions, and JavaScript syntax. Tests use synthetic data and mocked Chrome/DOM interfaces; authenticated smoke-check account data is never committed.
+The current suite contains 84 tests. Checks cover manifest references, the intended permissions, and JavaScript syntax. Tests use synthetic data and mocked Chrome/DOM interfaces; authenticated smoke-check account data is never committed.
 
 ## Documentation
 

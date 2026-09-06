@@ -63,7 +63,7 @@ The popup is a compact launcher and sync status surface. `dashboard.html` is the
 
 Fleet assignments associate a Turo vehicle ID with an E-ZPass tag or plate over an inclusive local-date interval. The worker validates dates, rejects overlapping ranges for the same identifier, rebuilds the derived vehicle list, and recalculates reconciliation in its serialized state queue. Unfinished assignment form values are stored separately in `uiDrafts` and restored when the dashboard reopens.
 
-Schema 3 reserves empty `invoiceDrafts`, `evidence`, and `submissionLedger` collections for later milestones. Their presence does not mean capture or submission is available; both remain disabled until their safety contracts and authenticated fixtures are implemented.
+Schema 4 builds `invoiceDrafts` through the pure `workspace.js` module. Only unique vehicle-confirmed matches enter a trip draft; collection completeness, Turo invoice status, empty toll sets, and sent fingerprints become explicit blockers. Toll/trip selections and integer-cent summaries persist locally. `evidence` and `submissionLedger` remain reserved for later milestones; no capture or submission is available yet.
 
 ## Internal message reference
 
@@ -77,6 +77,10 @@ These are internal extension messages, not a public web API.
 | Dashboard -> worker | `SAVE_UI_DRAFT` | `draft` | `ok, state` |
 | Dashboard -> worker | `UPSERT_ASSIGNMENT` | `assignment` | `ok, state` |
 | Dashboard -> worker | `DELETE_ASSIGNMENT` | `assignmentId` | `ok, state` |
+| Dashboard -> worker | `SET_TOLL_SELECTION` | `reservationId, tollId, selected` | `ok, state` |
+| Dashboard -> worker | `SET_TRIP_SELECTION` | `reservationId, selected` | `ok, state` |
+| Dashboard -> worker | `SELECT_ALL_READY` | `selected` | `ok, state` |
+| Dashboard -> worker | `PREPARE_BATCH` | None | Error until evidence adapters are verified |
 | Popup/dashboard -> worker | `CLEAR_LOCAL_DATA` | None | `ok, state, resetFailures` |
 | Worker -> collector | `COLLECT_NOW` | None | `ok, source, records, pagePath, warning`, or error |
 | Worker -> collector | `CLEAR_CAPTURE` | None | `ok` |
@@ -92,7 +96,7 @@ The worker queues popup/dashboard operations to serialize read-modify-write stat
 
 The worker allows 25 seconds for either source collection; ordinary tab operations retain 5 seconds. It rechecks the page after collection and filters Turo to valid completed intervals. Both successful nonempty source batches are sanitized, reconciled, and saved together in one storage item. A source error preserves the previous snapshot. This is not a cross-portal transactional snapshot or a completeness guarantee.
 
-Updates to settings or fleet assignments recalculate the current records without changing the source refresh times. Schema 3 migrates valid legacy vehicle mappings to open-ended dated assignments and preserves verified schema-2 source snapshots. Timeout diagnostics contain only DOM-candidate and JSON-response counts. On worker restart, persisted state is reloaded. Pending work is not resumable across arbitrary worker/browser termination; retry sync if interrupted.
+Updates to settings or fleet assignments recalculate the current records without changing source refresh times and revalidate draft selections. Schema 4 preserves schema-3 sources and fleet assignments but does not upgrade their completeness or invoice status. Timeout diagnostics contain only DOM-candidate and JSON-response counts. On worker restart, persisted state and selections are rebuilt from canonical records. Pending work is not resumable across arbitrary worker/browser termination; retry sync if interrupted.
 
 ## Limits
 

@@ -1,4 +1,5 @@
 import { DEFAULT_TIME_ZONE, reconcileTolls, selectCompletedTrips } from "./reconciler.js";
+import { buildTripWorkspace, selectAllReady, setTollSelection, setTripSelection, summarizeSelection } from "./workspace.js";
 
 const STORAGE_KEY = "turoTollReconcilerState";
 const PATTERNS = { turo: ["https://turo.com/*"], ezpass: ["https://www.e-zpassny.com/*", "https://e-zpassny.com/*"] };
@@ -22,7 +23,7 @@ const isHistoryUrl = (url) => {
 let operations = Promise.resolve();
 
 const emptyState = () => ({
-  version: 3,
+  version: 4,
   sources: {
     turo: { records: [], updatedAt: null },
     ezpass: { records: [], updatedAt: null }
@@ -32,7 +33,13 @@ const emptyState = () => ({
   },
   fleet: { vehicles: [], assignments: [] },
   uiDrafts: { vehicleAssignment: {} },
+  collectionRuns: {
+    turo: { complete: false, pageCount: 0, recordCount: 0, updatedAt: null, warning: "Not collected." },
+    ezpass: { complete: false, pageCount: 0, recordCount: 0, updatedAt: null, warning: "Not collected." }
+  },
+  tripEligibility: {},
   invoiceDrafts: [],
+  selectionSummary: { tripCount: 0, tollCount: 0, totalCents: 0 },
   evidence: [],
   submissionLedger: [],
   reconciliation: null,
@@ -44,8 +51,20 @@ const storageReady = chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED
 async function getState() {
   await storageReady;
   const stored = (await chrome.storage.local.get(STORAGE_KEY))[STORAGE_KEY];
-  if (stored?.version === 3) return stored;
+  if (stored?.version === 4) return reconcile(stored);
   const fresh = emptyState();
+  if (stored?.version === 3) {
+    fresh.sources = stored.sources || fresh.sources;
+    fresh.settings = { ...fresh.settings, ...(stored.settings || {}) };
+    fresh.fleet = stored.fleet || fresh.fleet;
+    fresh.uiDrafts = stored.uiDrafts || fresh.uiDrafts;
+    fresh.evidence = Array.isArray(stored.evidence) ? stored.evidence : [];
+    fresh.submissionLedger = Array.isArray(stored.submissionLedger) ? stored.submissionLedger : [];
+    fresh.lastSync = stored.lastSync || null;
+    // Schema 3 never proved pagination or invoice state, so migrated records
+    // remain visible but blocked from batch selection until a complete refresh.
+    return reconcile(fresh);
+  }
   if ([1, 2].includes(stored?.version)) {
     // Version 2 keeps its verified history snapshot; version 1 retires its old
     // pre-history records. Both migrate flat mappings to dated assignments.
@@ -80,11 +99,23 @@ async function save(state) {
 
 function reconcile(state) {
   const { completed } = selectCompletedTrips(state.sources.turo.records, { timeZone: state.settings.timeZone });
+  rebuildVehicles(state);
   state.reconciliation = reconcileTolls(
     state.sources.ezpass.records, completed, {
       ...state.settings, vehicleAssignments: state.fleet?.assignments || []
     }
   );
+  const workspace = buildTripWorkspace({
+    trips: completed,
+    reconciliation: state.reconciliation,
+    previousDrafts: state.invoiceDrafts,
+    tripEligibility: state.tripEligibility,
+    collectionRuns: state.collectionRuns,
+    submissionLedger: state.submissionLedger,
+    timeZone: state.settings.timeZone
+  });
+  state.invoiceDrafts = workspace.drafts;
+  state.selectionSummary = workspace.summary;
   return state;
 }
 
@@ -97,7 +128,7 @@ function scalar(value) {
 function sanitizeRecords(source, raw) {
   if (!Array.isArray(raw) || raw.length > MAX_RECORDS) throw new Error("Invalid record batch.");
   const fields = source === "turo"
-    ? ["id", "vehicleId", "start", "end"]
+    ? ["id", "vehicleId", "start", "end", "vehicleLabel", "vehiclePlate", "invoiceStatus", "invoiceDeadline"]
     : ["id", "timestamp", "plaza", "amount", "tagId", "plate", "tagOrPlate", "vehicleId"];
   const records = new Map();
   for (const candidate of raw) {
@@ -160,7 +191,12 @@ async function collect(source) {
       if (filtered.excludedCount) warning = [warning, `${filtered.excludedCount} upcoming, in-progress, or invalid trips excluded.`].filter(Boolean).join(" ");
       if (!records.length) throw new Error("No completed trips with valid full timestamps were found in history. Future and in-progress trips are excluded.");
     }
-    return { source, ok: true, records, warning };
+    return {
+      source, ok: true, records, warning,
+      complete: response.complete === true,
+      pageCount: Number.isInteger(response.pageCount) && response.pageCount > 0 ? response.pageCount : 1,
+      rawCount: Number.isInteger(response.rawCount) && response.rawCount >= records.length ? response.rawCount : records.length
+    };
   } catch (error) {
     return { source, ok: false, error: error.message || "Reload the portal tab after installation." };
   }
@@ -177,7 +213,21 @@ async function runSync() {
   const now = new Date().toISOString();
   for (const result of [turo, ezpass]) {
     state.sources[result.source] = { records: result.records, updatedAt: now };
+    state.collectionRuns[result.source] = {
+      complete: result.complete,
+      pageCount: result.pageCount,
+      recordCount: result.records.length,
+      rawCount: result.rawCount,
+      updatedAt: now,
+      warning: result.complete ? null : (result.warning || "Only records loaded by the current portal page were captured; pagination is incomplete.")
+    };
   }
+  state.tripEligibility = Object.fromEntries(state.sources.turo.records.map((trip) => [String(trip.id), {
+    status: ["eligible_uncharged", "already_charged", "ineligible", "status_unknown"].includes(trip.invoiceStatus)
+      ? trip.invoiceStatus : "status_unknown",
+    deadline: trip.invoiceDeadline || null,
+    checkedAt: now
+  }]));
   state.lastSync = now;
   await save(reconcile(state));
   return {
@@ -244,10 +294,23 @@ function assertNoAssignmentOverlap(assignments) {
 }
 
 function rebuildVehicles(state) {
-  const labels = new Map((state.fleet?.vehicles || []).map((vehicle) => [String(vehicle.vehicleId), String(vehicle.label || "")]));
-  for (const assignment of state.fleet.assignments) if (assignment.label) labels.set(assignment.vehicleId, assignment.label);
-  for (const trip of state.sources.turo.records) if (!labels.has(String(trip.vehicleId))) labels.set(String(trip.vehicleId), "");
-  state.fleet.vehicles = [...labels].map(([vehicleId, label]) => ({ vehicleId, label }));
+  const vehicles = new Map((state.fleet?.vehicles || []).map((vehicle) => [String(vehicle.vehicleId), {
+    vehicleId: String(vehicle.vehicleId), label: String(vehicle.label || ""), sourcePlate: vehicle.sourcePlate || null
+  }]));
+  for (const trip of state.sources.turo.records) {
+    const vehicleId = String(trip.vehicleId || "");
+    if (!vehicleId) continue;
+    const current = vehicles.get(vehicleId) || { vehicleId, label: "", sourcePlate: null };
+    if (!current.label && trip.vehicleLabel) current.label = String(trip.vehicleLabel);
+    if (!current.sourcePlate && trip.vehiclePlate) current.sourcePlate = String(trip.vehiclePlate);
+    vehicles.set(vehicleId, current);
+  }
+  for (const assignment of state.fleet.assignments) {
+    const current = vehicles.get(assignment.vehicleId) || { vehicleId: assignment.vehicleId, label: "", sourcePlate: null };
+    if (assignment.label) current.label = assignment.label;
+    vehicles.set(assignment.vehicleId, current);
+  }
+  state.fleet.vehicles = [...vehicles.values()];
 }
 
 async function clearData() {
@@ -312,6 +375,33 @@ async function handle(message) {
       state.fleet.assignments = state.fleet.assignments.filter((item) => item.id !== message.id);
       rebuildVehicles(state);
       return { state: await save(reconcile(state)) };
+    }
+    case "SET_TOLL_SELECTION": {
+      const state = await getState();
+      state.invoiceDrafts = setTollSelection(
+        state.invoiceDrafts, message.reservationId, message.tollId, message.selected === true
+      );
+      state.selectionSummary = summarizeSelection(state.invoiceDrafts);
+      return { state: await save(state) };
+    }
+    case "SET_TRIP_SELECTION": {
+      const state = await getState();
+      state.invoiceDrafts = setTripSelection(
+        state.invoiceDrafts, message.reservationId, message.selected === true
+      );
+      state.selectionSummary = summarizeSelection(state.invoiceDrafts);
+      return { state: await save(state) };
+    }
+    case "SELECT_ALL_READY": {
+      const state = await getState();
+      state.invoiceDrafts = selectAllReady(state.invoiceDrafts, message.selected !== false);
+      state.selectionSummary = summarizeSelection(state.invoiceDrafts);
+      return { state: await save(state) };
+    }
+    case "PREPARE_BATCH": {
+      const state = await getState();
+      if (!state.selectionSummary?.tripCount) throw new Error("Select at least one ready trip first.");
+      throw new Error("Evidence capture is not enabled in this collector release. No invoice was submitted.");
     }
     default: throw new Error("Unknown extension operation.");
   }

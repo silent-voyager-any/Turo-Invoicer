@@ -15,7 +15,7 @@ There are no npm dependencies, bundler, transpiler, or required build outputs. N
 
 ## Test inventory
 
-The current suite has 74 tests across:
+The current suite has 84 tests across:
 
 - `tests/reconciler.test.js`: time zones, DST folds/gaps, calendar validity, amounts, intervals, mappings, grace, immutability.
 - `tests/content.test.js`: field reduction, DOM fallbacks, bridge validation, delayed insertion, attribute hydration, network wakeup, settling, cancellation, concurrent waiters, container isolation.
@@ -23,6 +23,7 @@ The current suite has 74 tests across:
 - `tests/network.test.js`: fetch response preservation, path/domain filtering, XHR reuse, malformed JSON, exact-page gating, and request-start provenance.
 - `tests/popup.test.js`: dashboard launching, source counts, sync status, and clear-data behavior.
 - `tests/dashboard.test.js`: draft persistence, fleet rendering, date bounds, and assignment commands.
+- `tests/workspace.test.js`: trip-centric grouping, confirmed-vehicle gating, sent-fingerprint exclusion, persisted toll/trip selection, and cent totals.
 - Additional history cases cover completed-only intervals, off-route rejection, and old-state invalidation; E-ZPass cases cover delayed rows, header variants, mixed identifiers, and posted-only rejection.
 - Detail-read cases cover synthetic `baseTripCard` discovery, generated endpoint allowlists, exact reservation identity, nested epoch and local timestamps, conflicting or malformed JSON, response type/size/URL validation, concurrency, cancellation, failures, and avoiding unnecessary GETs. The synthetic fixture mirrors the field shape inspected in an authenticated browser without retaining account data.
 

@@ -78,6 +78,7 @@
     const records = () => [...(network.size ? network : dom).values()];
     const snapshot = (current = records()) => ({
       ok: true, source, records: current, ...(options.isPageAllowed ? { pagePath: capturePath } : {}),
+      complete: false, pageCount: 1, rawCount: current.length,
       warning: capped ? "Capture limit reached; narrow the portal date range and reload." :
         "Only loaded records are included; pagination and completeness are not verified."
     });

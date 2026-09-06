@@ -129,7 +129,7 @@ test("worker invalidates version-1 snapshots but migrates manual mappings", asyn
   stored.turoTollReconcilerState = { version: 1, sources: { turo: { records: [{ id: "old" }] } },
     settings: { vehicleByTag: { "001": "car1" }, vehicleByPlate: {}, graceMinutes: 15 } };
   const { state } = await call({ type: "GET_STATE" });
-  assert.equal(state.version, 3);
+  assert.equal(state.version, 4);
   assert.equal(state.sources.turo.records.length, 0);
   assert.deepEqual(state.fleet.assignments.map(({ kind, identifier, vehicleId, validFrom, validTo }) =>
     ({ kind, identifier, vehicleId, validFrom, validTo })), [
@@ -151,6 +151,38 @@ test("dashboard drafts persist and dated assignments reject overlapping ownershi
   } }, dashboardSender);
   assert.equal(overlap.ok, false);
   assert.match(overlap.error, /Overlapping tag/);
+});
+test("schema-3 state migrates without treating its loaded page as complete", async () => {
+  stored.turoTollReconcilerState = {
+    version: 3,
+    sources: { turo: { records: portalResponses[1].records, updatedAt: "prior" }, ezpass: { records: portalResponses[2].records, updatedAt: "prior" } },
+    settings: { timeZone: "America/New_York", graceMinutes: 0 },
+    fleet: { vehicles: [{ vehicleId: "car1", label: "Car one" }], assignments: [] },
+    uiDrafts: { vehicleAssignment: {} }, evidence: [], submissionLedger: [], lastSync: "prior"
+  };
+  const { state } = await call({ type: "GET_STATE" });
+  assert.equal(state.version, 4);
+  assert.equal(state.sources.turo.records.length, 1);
+  assert.equal(state.collectionRuns.turo.complete, false);
+  assert.equal(state.invoiceDrafts[0].eligibility, "status_unknown");
+});
+test("trip and toll selections persist only for complete eligible drafts", async () => {
+  delete stored.turoTollReconcilerState;
+  const oldTuro = portalResponses[1], oldEzpass = portalResponses[2];
+  portalResponses[1] = { ...oldTuro, complete: true, pageCount: 2, records: oldTuro.records.map((item) => ({ ...item, invoiceStatus: "eligible_uncharged" })) };
+  portalResponses[2] = { ...oldEzpass, complete: true, pageCount: 3, records: oldEzpass.records.map((item) => ({ ...item })) };
+  try {
+    let result = await call({ type: "RUN_SYNC" }, dashboardSender);
+    assert.equal(result.state.invoiceDrafts[0].selectable, false, "vehicle identity must be confirmed");
+    result = await call({ type: "UPSERT_ASSIGNMENT", assignment: { vehicleId: "car1", kind: "tag", identifier: "001" } }, dashboardSender);
+    portalResponses[2].records[0].tagId = "001";
+    result = await call({ type: "RUN_SYNC" }, dashboardSender);
+    assert.equal(result.state.invoiceDrafts[0].selectable, true);
+    result = await call({ type: "SET_TRIP_SELECTION", reservationId: "trip1", selected: true }, dashboardSender);
+    assert.equal(result.state.selectionSummary.tripCount, 1);
+    result = await call({ type: "SET_TOLL_SELECTION", reservationId: "trip1", tollId: "toll1", selected: false }, dashboardSender);
+    assert.equal(result.state.selectionSummary.tripCount, 0);
+  } finally { portalResponses[1] = oldTuro; portalResponses[2] = oldEzpass; }
 });
 test("worker rejects E-ZPass dashboard pages outside transaction activity", async () => {
   ezpassUrl = "https://www.e-zpassny.com/ezpass/dashboard";

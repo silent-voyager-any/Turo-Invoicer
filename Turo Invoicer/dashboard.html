@@ -9,38 +9,63 @@
   <body>
     <header class="topbar">
       <div><p class="eyebrow">LOCAL FLEET WORKSPACE</p><h1>Turo toll dashboard</h1></div>
-      <div class="top-actions"><span id="statusDot" class="status-dot"></span><button id="syncButton" class="primary">Sync portal tabs</button></div>
+      <div class="top-actions"><span id="statusDot" class="status-dot"></span><button id="syncButton" class="primary">Find uncharged trips</button></div>
     </header>
+    <nav class="nav" aria-label="Dashboard pages">
+      <button id="navVehicles" data-view="vehicles">Vehicles</button>
+      <button id="navTrips" data-view="trips">Trips</button>
+      <button id="navReview" data-view="review">Needs review <span id="navReviewCount">0</span></button>
+      <button id="navBatch" data-view="batch">Batch <span id="navBatchCount">0</span></button>
+    </nav>
     <main>
       <p id="status" class="status" role="status" aria-live="polite">Loading…</p>
-      <section class="metrics" aria-label="Saved records">
-        <article><span>Turo history</span><strong id="tripCount">0</strong></article>
-        <article><span>E-ZPass tolls</span><strong id="tollCount">0</strong></article>
-        <article><span>Suggestions</span><strong id="matchedCount">0</strong></article>
-        <article><span>Needs review</span><strong id="unmatchedCount">0</strong></article>
+      <section class="source-state" aria-label="Collection completeness">
+        <span id="turoCompleteness">Turo not collected</span><span id="ezpassCompleteness">E-ZPass not collected</span><span id="lastSync">Never synced</span>
       </section>
-      <div class="layout">
-        <section class="panel">
-          <p class="eyebrow">FLEET</p><h2>Dated tag and plate assignments</h2>
-          <p class="help">Your unfinished entry is saved automatically. Dates are inclusive in America/New_York; leave either date empty for an open-ended assignment.</p>
+      <section class="metrics" aria-label="Saved records">
+        <article><span>Turo trips</span><strong id="tripCount">0</strong></article>
+        <article><span>E-ZPass tolls</span><strong id="tollCount">0</strong></article>
+        <article><span>Trip drafts</span><strong id="draftCount">0</strong></article>
+        <article><span>Selected total</span><strong id="selectedTotal">$0.00</strong></article>
+      </section>
+
+      <section id="vehiclesView" class="view panel">
+        <p class="eyebrow">VEHICLES</p><h2>Fleet and dated identifiers</h2>
+        <p class="help">Add one assignment for each plate or E-ZPass tag. Add another vehicle by saving another assignment with a different Turo vehicle ID. Your unfinished entry is saved automatically.</p>
+        <div class="vehicle-layout">
           <form id="assignmentForm">
             <label>Turo vehicle ID<input id="vehicleId" list="vehicleOptions" maxlength="100" required /></label><datalist id="vehicleOptions"></datalist>
             <label>Vehicle label (optional)<input id="vehicleLabel" maxlength="100" placeholder="Example: BMW X1 — black" /></label>
             <label>Identifier type<select id="identifierKind"><option value="tag">E-ZPass tag</option><option value="plate">License plate</option></select></label>
             <label>Tag or plate<input id="identifier" maxlength="100" required placeholder="Leading zeros are preserved" /></label>
             <div class="date-grid"><label>Effective from<input id="validFrom" type="date" /></label><label>Effective through<input id="validTo" type="date" /></label></div>
-            <button class="primary" type="submit">Save assignment</button>
+            <button class="primary" type="submit">Save vehicle assignment</button>
           </form>
-          <div id="assignmentList" class="stack"></div>
-        </section>
-        <section class="panel">
-          <div class="panel-heading"><div><p class="eyebrow">MATCHING</p><h2>Trip suggestions</h2></div><label>Grace period<select id="graceMinutes"><option value="0">None</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">1 hour</option></select></label></div>
-          <h3>Matched</h3><div id="matchedList" class="stack empty">No matches yet.</div>
-          <h3>Needs review</h3><div id="unmatchedList" class="stack empty">No unmatched tolls.</div>
-        </section>
-      </div>
-      <section class="panel roadmap"><p class="eyebrow">INVOICE SAFETY GATE</p><h2>Evidence and batch submission</h2><p>The fleet dashboard and dated matching model are active. Screenshot capture and Turo submission remain disabled until their local evidence store, duplicate ledger, and authenticated DOM fixtures pass the milestones in the repository’s PROJECT_PLAN.md.</p></section>
-      <footer><span id="lastSync">Never synced</span><button id="clearButton" class="text-button">Clear local data</button></footer>
+          <div><h3>Configured vehicles</h3><div id="assignmentList" class="stack"></div></div>
+        </div>
+      </section>
+
+      <section id="tripsView" class="view panel" hidden>
+        <div class="panel-heading"><div><p class="eyebrow">TRIPS</p><h2>Completed trip drafts</h2></div><div class="inline-actions"><label>Grace<select id="graceMinutes"><option value="0">None</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">1 hour</option></select></label><button id="selectAllButton">Select all ready trips</button></div></div>
+        <p class="help">Each Turo trip appears once with its uniquely vehicle-confirmed tolls. Disabled cards explain what must be resolved before batching.</p>
+        <div id="tripsList" class="stack trip-stack"></div>
+      </section>
+
+      <section id="reviewView" class="view panel" hidden>
+        <p class="eyebrow">NEEDS REVIEW</p><h2>Blocked trips and unmatched tolls</h2>
+        <p class="help">Unknown invoice states, incomplete pagination, missing mappings, time-only suggestions, conflicts, and ambiguous intervals stay here instead of being charged.</p>
+        <div id="reviewList" class="stack"></div>
+      </section>
+
+      <section id="batchView" class="view panel" hidden>
+        <p class="eyebrow">BATCH</p><h2>Selected reimbursement drafts</h2>
+        <div class="batch-summary"><strong id="batchTrips">0 trips</strong><strong id="batchTolls">0 tolls</strong><strong id="batchTotal">$0.00</strong></div>
+        <div id="batchList" class="stack"></div>
+        <button id="prepareButton" class="primary batch-action">Prepare selected trips</button>
+        <p class="safety">Evidence capture and Turo submission stay blocked until authenticated pagination, invoice-state, evidence-row, and reimbursement-form fixtures are verified. This build cannot send an invoice.</p>
+      </section>
+
+      <footer><button id="clearButton" class="text-button">Clear local data</button></footer>
     </main>
     <script src="dashboard.js" type="module"></script>
   </body>

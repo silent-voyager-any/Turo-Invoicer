@@ -46,11 +46,11 @@ Help a multi-vehicle Turo host collect NY E-ZPass toll activity, associate each 
 - Add `alarms` for 30-day evidence cleanup.
 - Do not add `<all_urls>`, `cookies`, `webRequest`, `debugger`, `downloads`, or remote-code permissions.
 
-## Schema 3
+## Schema 4
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "sources": { "turo": { "records": [] }, "ezpass": { "records": [] } },
   "settings": { "timeZone": "America/New_York", "graceMinutes": 0 },
   "fleet": {
@@ -65,7 +65,13 @@ Help a multi-vehicle Turo host collect NY E-ZPass toll activity, associate each 
     }]
   },
   "uiDrafts": { "vehicleAssignment": {} },
+  "collectionRuns": {
+    "turo": { "complete": false, "pageCount": 0, "recordCount": 0 },
+    "ezpass": { "complete": false, "pageCount": 0, "recordCount": 0 }
+  },
+  "tripEligibility": {},
   "invoiceDrafts": [],
+  "selectionSummary": { "tripCount": 0, "tollCount": 0, "totalCents": 0 },
   "evidence": [],
   "submissionLedger": [],
   "reconciliation": null,
@@ -104,9 +110,13 @@ Invoice draft states are `needs_mapping`, `needs_evidence`, `ready`, `approved`,
 
 ## Milestones
 
-### M1 — Persistent fleet dashboard
+### M1 — Persistent fleet dashboard — complete
 
 - Schema-3 migration, full dashboard, autosaved form drafts, dated assignments, fleet-aware reconciliation, and regression tests.
+
+### M1.5 — Trip workspace — complete
+
+- Schema-4 migration, four dashboard pages, one draft per completed trip, nested unique vehicle-confirmed tolls, persistent multi-selection, completeness/status blockers, and integer-cent totals.
 
 ### M2 — Evidence capture
 

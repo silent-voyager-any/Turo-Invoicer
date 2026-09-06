@@ -71,9 +71,17 @@
     const vehicle = pick(value, ["vehicle", "car", "listing"]);
     const vehicleId = scalar(pick(value, ["vehicleId", "listingId"])) ?? scalar(pick(vehicle, ["id", "vehicleId"]));
     if (startValue == null || endValue == null || vehicleId == null) return null;
+    const make = scalar(pick(vehicle, ["make"]));
+    const model = scalar(pick(vehicle, ["model"]));
+    const year = scalar(pick(vehicle, ["year"]));
+    const registration = pick(vehicle, ["registration"]);
+    const plate = scalar(pick(registration, ["licensePlate"]));
+    const state = scalar(pick(registration, ["state"]));
     return {
       id: scalar(pick(value, ["tripId", "reservationId", "bookingId", "id"])),
-      vehicleId: String(vehicleId), start: startValue, end: endValue
+      vehicleId: String(vehicleId), start: startValue, end: endValue,
+      vehicleLabel: [year, make, model].filter((part) => part != null && String(part).trim()).join(" ") || null,
+      vehiclePlate: plate == null ? null : [state, plate].filter(Boolean).join(":")
     };
   }
 

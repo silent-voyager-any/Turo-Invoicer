@@ -441,6 +441,8 @@ test("baseTripCard discovery enriches only its reservation during explicit sync"
   assert.equal(env.answers[0].ok, true);
   assert.equal(env.answers[0].records[0].id, "900001");
   assert.equal(env.answers[0].records[0].vehicleId, "800001");
+  assert.equal(env.answers[0].records[0].vehicleLabel, "Example Sedan");
+  assert.equal(env.answers[0].records[0].vehiclePlate, "NY:TEST001");
   assert.equal(env.answers[0].records[0].start, detailRecord().tripStart.epochMillis);
   assert.equal(env.requested.length, 1);
   assert.equal(env.requested[0].url,

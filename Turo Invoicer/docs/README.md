@@ -1,6 +1,6 @@
 # Project documentation
 
-This reference describes version 0.3.1, including the persistent fleet dashboard, dated vehicle assignments, authenticated same-origin Turo detail reads, completed-trip filtering, and E-ZPass normalization. Last reviewed: September 6, 2026.
+This reference describes version 0.4.0, including the trip-centric dashboard, schema-4 drafts and selections, dated vehicle assignments, authenticated same-origin Turo detail reads, completed-trip filtering, and E-ZPass normalization. Last reviewed: September 6, 2026.
 
 ## Reading paths
 
@@ -22,13 +22,15 @@ Paths below are relative to the extension directory.
 | [turo_details.js](../turo_details.js) | Bounded, allowlisted same-origin reservation-detail JSON GETs |
 | [content_ezpass.js](../content_ezpass.js) | E-ZPass record aliases and activity-table fallbacks |
 | [reconciler.js](../reconciler.js) | Pure normalization and interval matching |
-| [popup.js](../popup.js), [popup.html](../popup.html), [popup.css](../popup.css) | Host-facing controls and results |
+| [workspace.js](../workspace.js) | Pure trip-draft grouping, blockers, selections, and totals |
+| [dashboard.js](../dashboard.js), [dashboard.html](../dashboard.html), [dashboard.css](../dashboard.css) | Vehicles, Trips, Needs review, and Batch pages |
+| [popup.js](../popup.js), [popup.html](../popup.html), [popup.css](../popup.css) | Compact launcher and sync status |
 | [package.json](../package.json) | Dependency-free test/check commands |
 | [tests](../tests) | Synthetic adapter, worker, network, and matching tests |
 
 ## Implementation versus roadmap
 
-Implemented: passive capture on the exact history/transactions pages, explicit-sync JSON reads for history-linked reservations, completed-trip filtering, local suggestions, a persistent dashboard, autosaved fleet drafts, dated tag/plate assignments, safe ambiguity handling, bounded SPA waiting, and local clearing.
+Implemented: passive current-page capture, explicit-sync JSON reads for history-linked reservations, completed-trip filtering, trip-centric drafts, nested uniquely confirmed tolls, persistent toll/trip selection, exact cent totals, four dashboard pages, autosaved fleet drafts, dated tag/plate assignments, safe blockers, bounded SPA waiting, and local clearing.
 
 Not implemented: automatic pagination, screenshot evidence storage, invoice generation/submission, account identity verification, completeness certification, backend services, licensing/billing, or a packaged Chrome Web Store release. These remain gated in the root `PROJECT_PLAN.md`.
 

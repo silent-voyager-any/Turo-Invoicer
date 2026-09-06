@@ -1,6 +1,6 @@
 # Trip-centric toll reconciliation and batch workflow
 
-Last reviewed: September 6, 2026. This specification defines the next product workflow. It describes required behavior, not functionality already present in version 0.3.1.
+Last reviewed: September 6, 2026. Version 0.4.0 implements the schema-4 trip workspace, nested confirmed tolls, four dashboard pages, and persistent selection. Complete pagination, verified Turo invoice status, evidence, and submission remain required behavior rather than completed capabilities.
 
 ## Goal
 

@@ -15,9 +15,16 @@ async function dashboard() {
   const elements = new Map();
   const document = { querySelector(selector) { if (!elements.has(selector)) elements.set(selector, node()); return elements.get(selector); }, createElement: node };
   let state = {
-    version: 3, sources: { turo: { records: [{ id: "trip", vehicleId: "car1" }] }, ezpass: { records: [] } },
+    version: 4, sources: { turo: { records: [{ id: "trip", vehicleId: "car1" }] }, ezpass: { records: [{ id: "toll" }] } },
     settings: { timeZone: "America/New_York", graceMinutes: 0 }, fleet: { vehicles: [{ vehicleId: "car1", label: "Car one" }], assignments: [] },
-    uiDrafts: { vehicleAssignment: { vehicleId: "car1", label: "Car one", kind: "tag", identifier: "001" } }, reconciliation: null, lastSync: null
+    uiDrafts: { vehicleAssignment: { vehicleId: "car1", label: "Car one", kind: "tag", identifier: "001" } },
+    collectionRuns: { turo: { complete: true, pageCount: 2, recordCount: 1 }, ezpass: { complete: true, pageCount: 3, recordCount: 1 } },
+    invoiceDrafts: [{
+      reservationId: "trip", vehicleId: "car1", startMs: Date.parse("2026-01-01T14:00:00Z"), endMs: Date.parse("2026-01-01T20:00:00Z"),
+      eligibility: "eligible_uncharged", tolls: [{ id: "toll", timestampMs: Date.parse("2026-01-01T16:00:00Z"), plaza: "Example", amountCents: 425, tagId: "001" }],
+      selectedTollIds: ["toll"], selected: false, selectable: true, blockingReasons: [], totalCents: 425
+    }],
+    selectionSummary: { tripCount: 0, tollCount: 0, totalCents: 0 }, reconciliation: { matched: [], unmatchedTolls: [], ambiguous: [] }, lastSync: null
   };
   const messages = [];
   const chrome = { runtime: { sendMessage: async (message) => {
@@ -47,4 +54,22 @@ test("dashboard submits a dated assignment and clears the completed form", async
   assert.equal(save.assignment.identifier, "001");
   assert.equal(save.assignment.validFrom, "2026-01-01");
   assert.equal(env.elements.get("#vehicleId").value, "");
+});
+
+test("dashboard renders trip cards and sends trip selection changes", async () => {
+  const env = await dashboard();
+  assert.equal(env.elements.get("#tripsList").children.length, 1);
+  await env.elements.get("#tripsList").listeners.change({ target: {
+    checked: true, dataset: { action: "trip", reservationId: "trip" }
+  } });
+  assert.equal(env.messages.at(-1).type, "SET_TRIP_SELECTION");
+  assert.equal(env.messages.at(-1).reservationId, "trip");
+});
+
+test("dashboard exposes vehicles, trips, review and batch pages", async () => {
+  const env = await dashboard();
+  for (const id of ["#navVehicles", "#navTrips", "#navReview", "#navBatch"]) assert.equal(typeof env.elements.get(id).listeners.click, "function");
+  env.elements.get("#navTrips").listeners.click();
+  assert.equal(env.elements.get("#tripsView").hidden, false);
+  assert.equal(env.elements.get("#vehiclesView").hidden, true);
 });
