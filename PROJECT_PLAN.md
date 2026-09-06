@@ -2,6 +2,8 @@
 
 Last reviewed: September 6, 2026. This document is the implementation source of truth for the local-first Chrome extension.
 
+The detailed trip-centric discovery, selection, evidence, and batch experience is specified in [TRIP_BATCH_WORKFLOW.md](TRIP_BATCH_WORKFLOW.md).
+
 ## Product goal
 
 Help a multi-vehicle Turo host collect NY E-ZPass toll activity, associate each toll with the correct completed trip, assemble portal evidence, and send selected reimbursement invoices after one explicit batch approval. “Charge” means sending a Turo reimbursement invoice; it does not guarantee immediate guest payment.

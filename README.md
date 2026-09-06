@@ -64,6 +64,7 @@ The current suite contains 74 tests. Checks cover manifest references, the inten
 | Guide | Contents |
 | --- | --- |
 | [Product plan](PROJECT_PLAN.md) | Fleet dashboard, evidence, invoice safeguards, milestones, and acceptance criteria |
+| [Trip batch workflow](TRIP_BATCH_WORKFLOW.md) | Complete pagination, uncharged-trip discovery, trip-grouped toll selection, evidence, and batch execution |
 | [Documentation index](Turo%20Invoicer/docs/README.md) | Reading paths and source map |
 | [User guide](Turo%20Invoicer/docs/USER_GUIDE.md) | Installation, sync, mappings, results, clearing data |
 | [Architecture](Turo%20Invoicer/docs/ARCHITECTURE.md) | Execution contexts, SPA waiting, messages, limits |
