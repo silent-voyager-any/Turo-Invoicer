@@ -15,7 +15,7 @@ There are no npm dependencies, bundler, transpiler, or required build outputs. N
 
 ## Test inventory
 
-The current suite has 89 tests across:
+The current suite has 109 tests across:
 
 - `tests/reconciler.test.js`: time zones, DST folds/gaps, calendar validity, amounts, intervals, canonical identifiers, mappings, grace, immutability.
 - `tests/content.test.js`: field reduction, DOM fallbacks, bridge validation, delayed insertion, attribute hydration, network wakeup, settling, cancellation, concurrent waiters, container isolation.
@@ -26,6 +26,8 @@ The current suite has 89 tests across:
 - `tests/workspace.test.js`: trip-centric grouping, confirmed-vehicle gating, sent-fingerprint exclusion, persisted toll/trip selection, and cent totals.
 - Additional history cases cover completed-only intervals, off-route rejection, and old-state invalidation; E-ZPass cases cover delayed rows, header variants, mixed identifiers, and posted-only rejection.
 - Detail-read cases cover synthetic `baseTripCard` discovery, generated endpoint allowlists, exact reservation identity, nested epoch and local timestamps, conflicting or malformed JSON, response type/size/URL validation, concurrency, cancellation, failures, and avoiding unnecessary GETs. The synthetic fixture mirrors the field shape inspected in an authenticated browser without retaining account data.
+- Invoice-status cases cover exact route gating, duplicate detail links, Tolls-item detection inside the verified container, enabled TOLLS-option detection, temporary-tab cleanup, existing invoices, and eligible uncharged trips.
+- E-ZPass collection cases cover accessible pager semantics, exact page advancement, transient empty placeholders, final disabled Next, chronology proof, repeated pages, filters, and range-local record selection.
 
 The check script verifies manifest declarations, referenced files, intended permissions, and root JavaScript syntax. It does not lint everything, validate documentation, run Chrome, or authenticate portal accounts. Content tests use hand-built DOM mocks; they cannot prove that selector candidates match the live portal.
 
@@ -64,7 +66,7 @@ Verify currency units and passage timestamps. Do not broaden endpoint capture or
 - [ ] Back/forward cache restoration reattaches capture correctly.
 - [ ] Exact tag/plate mapping and overlapping trips are manually inspected.
 - [ ] DST boundaries and end-point/grace cases match expected review behavior.
-- [ ] Empty ranges, pagination, virtualized lists, and large responses are explicitly assessed.
+- [x] Empty ranges, pagination, virtualized lists, and large responses are explicitly assessed in synthetic tests; live account totals still require manual release acceptance.
 - [ ] Clear data resets settings and reachable captures; unreachable-tab messaging is checked.
 - [ ] No request credentials, raw response payloads, or private logs are persisted.
 
@@ -87,9 +89,9 @@ Commit tested changes with a descriptive message. Follow any repository branch p
 
 The following are required work, not completed capabilities:
 
-- [ ] Validate current authenticated Turo/E-ZPass schemas and status semantics.
-- [ ] Establish stable source IDs and reliable deduplication.
-- [ ] Verify loaded data against statement/trip totals and define completeness handling.
+- [x] Validate the current authenticated Turo/E-ZPass adapter shapes and toll status semantics for personal use.
+- [x] Establish Lane Txn ID and numeric reservation/invoice IDs as stable adapter identities.
+- [x] Define terminal-page completeness handling; manual comparison against portal totals remains a release acceptance step.
 - [ ] Define account binding and safe behavior when switching accounts.
 - [x] Support inclusive dated vehicle/transponder assignments and reject conflicting overlaps.
 - [ ] Review money parsing, currency/units, credits, and source anomalies against verified fixtures.

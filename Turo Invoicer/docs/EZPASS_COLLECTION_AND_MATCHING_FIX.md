@@ -1,12 +1,12 @@
 # E-ZPass Complete Collection and Matching Fix
 
-Target release: **0.4.6**
+Target release: **0.4.7**
 
 ## Summary
 
 Live inspection showed that the E-ZPass transaction view can contain dozens of pages. Version 0.4.1 captures only the currently rendered page, so recent tolls can be compared with older Turo trips while the relevant E-ZPass pages are never loaded. Identifier mapping can therefore be correct while every toll still reports that no trip is in range.
 
-Version 0.4.6 collects Turo first, derives the oldest relevant completed-trip date, and reads the existing E-ZPass result pages without touching date filters. Transaction-row timestamps determine local inclusion. Collection ends at disabled Next or after a fully older page when explicit descending-sort metadata and observed chronology both prove that later pages cannot contain relevant tolls.
+Version 0.4.7 collects Turo first, derives the completed-trip coverage range, and reads the existing E-ZPass result pages without touching date filters. It uses the visible `nav[aria-label="pagination navigation"]`, the unique `aria-current` page button, and exact Previous/Next labels. It selects `View: 100` when available. A transient “No transactions found” placeholder during navigation is ignored until the requested page number and stable rows appear.
 
 ## Collection contract
 
@@ -37,7 +37,9 @@ The content script returns normalized records plus proof metadata:
 }
 ```
 
-The collector first rewinds to page 1, then reads settled pages sequentially. `Lane Txn ID` is the preferred deduplication key. Repeated pages, a missing/nonadvancing pager, active portal filters, route changes, timeouts, or safety-cap exhaustion fail the complete run. A failure never merges partial records into or replaces the previous snapshot.
+The response also records `lastPage`. The dashboard reports requested and observed ranges, in-range toll count, pages visited, and terminal reason separately.
+
+The collector first rewinds to page 1, optionally changes View to 100, then reads settled pages sequentially. `Lane Txn ID` is the preferred deduplication key. Completion requires disabled Next on the genuine final page or a chronology-proven page older than the requested range. Repeated pages, a missing/nonadvancing pager, active portal filters, route changes, timeouts, or safety-cap exhaustion fail the complete run. A failure never merges partial records into or replaces the previous snapshot.
 
 The collector drives only Previous and Next pagination controls. It checks whether filter fields are nonempty but never retains their values. It does not read or retain passwords, cookies, request headers, account data, or raw responses.
 
@@ -53,7 +55,7 @@ Review states are kept separate:
 - `overlapping_trips`: more than one trip for the resolved vehicle contains the toll time.
 - `invalid_timestamp` and `invalid_or_nonpositive_amount`: malformed source data.
 
-The dashboard displays both collection ranges and warns when they do not overlap. It may show confirmed tolls under trips while separate invoice-status or Turo-completeness blockers keep batching disabled. Active and future trips remain hidden, and nearest-trip, suffix, partial, or fuzzy matching is never used.
+The dashboard distinguishes full coverage with records, full coverage with no in-range tolls, and collection that stopped before the trip dates. It may show confirmed tolls under trips while separate eligibility blockers keep batching disabled. Active and future trips remain hidden, and nearest-trip, suffix, partial, or fuzzy matching is never used.
 
 ## Verification
 

@@ -10,9 +10,11 @@ let accessLevel;
 const sentMessages = [];
 let turoUrl = "https://turo.com/us/en/trips/history";
 let ezpassUrl = "https://www.e-zpassny.com/ezpass/dashboard/transactions";
+let managedUrl = null;
+const existingTollInvoices = new Set();
 const portalResponses = {
-  1: { ok: true, source: "turo", pagePath: "/us/en/trips/history", records: [{ id: "trip1", vehicleId: "car1", start: "2026-07-01 09:00", end: "2026-07-01 18:00", vehicleLabel: "Example car", vehiclePlate: "NY:ABC-123", guestName: "Synthetic private field" }] },
-  2: { ok: true, source: "ezpass", collectorRevision: "0.4.6-history-pagination-1", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, accountNumber: "Synthetic private field" }] }
+  1: { ok: true, source: "turo", complete: true, pagePath: "/us/en/trips/history", records: [{ id: "1001", vehicleId: "car1", start: "2026-07-01 09:00", end: "2026-07-01 18:00", vehicleLabel: "Example car", vehiclePlate: "NY:ABC-123", guestName: "Synthetic private field" }] },
+  2: { ok: true, source: "ezpass", complete: true, completeForRange: true, collectorRevision: "0.4.7-history-pagination-2", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, accountNumber: "Synthetic private field" }] }
 };
 globalThis.chrome = {
   runtime: { id: "test-id", getURL: (file) => "chrome-extension://test-id/" + file,
@@ -28,9 +30,20 @@ globalThis.chrome = {
     sendMessage: async (id, message) => {
       sentMessages.push({ id, message: structuredClone(message) });
       if (message.type === "CLEAR_CAPTURE") return { ok: true };
+      if (id === 90 && message.type === "COLLECT_INVOICE_STATUS") {
+        const reservationId = String(message.reservationId);
+        if (managedUrl.endsWith("/invoice-hub")) return { ok: true, phase: "hub", canCreate: true,
+          invoiceUrls: existingTollInvoices.has(reservationId) ? [`https://turo.com/us/en/reservation/${reservationId}/reimbursement/invoice?invoiceId=9001`] : [] };
+        if (managedUrl.includes("/reimbursement/invoice?")) return { ok: true, phase: "invoice", hasTolls: true };
+        if (managedUrl.endsWith("/select-incidental")) return { ok: true, phase: "select", tollOptionAvailable: true };
+      }
       if (id === 1 && delayTuro) await new Promise((resolve) => setTimeout(resolve, 5100));
       return structuredClone(portalResponses[id]);
-    }
+    },
+    create: async ({ url }) => ({ id: 90, url, status: "loading" }),
+    update: async (id, { url }) => { managedUrl = url; return { id, url, status: "complete" }; },
+    get: async (id) => ({ id, url: managedUrl, status: "complete" }),
+    remove: async () => { managedUrl = null; }
   }
 };
 await import("../background.js");
@@ -72,20 +85,32 @@ test("worker collects both sources atomically and strips extra fields", async ()
     { startDate: "2026-07-01", endDate: "2026-07-01" });
   assert.deepEqual(result.state.collectionRuns.ezpass.requestedRange, { startDate: "2026-07-01", endDate: "2026-07-01" });
 });
-test("verified uncharged trips define the E-ZPass coverage boundary when available", async () => {
+test("verified uncharged trips define the E-ZPass coverage boundary", async () => {
   const prior = portalResponses[1];
   sentMessages.length = 0;
   portalResponses[1] = { ...prior, records: [
-    { ...prior.records[0], id: "unknown-old", start: "2026-06-01 09:00", end: "2026-06-01 18:00" },
-    { ...prior.records[0], id: "verified", start: "2026-07-15 09:00", end: "2026-07-16 18:00", invoiceStatus: "eligible_uncharged" }
+    { ...prior.records[0], id: "1000", start: "2026-06-01 09:00", end: "2026-06-01 18:00" },
+    { ...prior.records[0], id: "2000", start: "2026-07-15 09:00", end: "2026-07-16 18:00" }
   ] };
   try {
     const result = await call({ type: "RUN_SYNC" });
     assert.equal(result.synced, true);
     assert.deepEqual(sentMessages.find(({ id, message }) => id === 2 && message.type === "COLLECT_NOW").message.range,
       { startDate: "2026-07-15", endDate: "2026-07-16" });
+    assert.equal(result.state.tripEligibility["1000"].reason, "standard_window_expired");
     assert.doesNotMatch(result.collection.turo.warning || "", /status is unverified/);
   } finally { portalResponses[1] = prior; }
+});
+test("existing Turo toll invoice is classified as already charged", async () => {
+  existingTollInvoices.add("1001");
+  try {
+    const result = await call({ type: "RUN_SYNC" });
+    assert.equal(result.synced, true);
+    assert.equal(result.state.tripEligibility["1001"].status, "already_charged");
+    assert.equal(result.state.tripEligibility["1001"].reason, "existing_toll_invoice");
+    assert.equal(result.state.tripEligibility["1001"].adapterRevision, "0.4.7-invoice-dom-1");
+    assert.equal(managedUrl, null, "temporary status tab must be closed");
+  } finally { existingTollInvoices.delete("1001"); }
 });
 test("failed or multiple-tab collection preserves the prior snapshot", async () => {
   const before = JSON.stringify(stored);
@@ -215,9 +240,9 @@ test("trip and toll selections persist only for complete eligible drafts", async
     portalResponses[2].records[0].tagId = "001";
     result = await call({ type: "RUN_SYNC" }, dashboardSender);
     assert.equal(result.state.invoiceDrafts[0].selectable, true);
-    result = await call({ type: "SET_TRIP_SELECTION", reservationId: "trip1", selected: true }, dashboardSender);
+    result = await call({ type: "SET_TRIP_SELECTION", reservationId: "1001", selected: true }, dashboardSender);
     assert.equal(result.state.selectionSummary.tripCount, 1);
-    result = await call({ type: "SET_TOLL_SELECTION", reservationId: "trip1", tollId: "toll1", selected: false }, dashboardSender);
+    result = await call({ type: "SET_TOLL_SELECTION", reservationId: "1001", tollId: "toll1", selected: false }, dashboardSender);
     assert.equal(result.state.selectionSummary.tripCount, 0);
   } finally { portalResponses[1] = oldTuro; portalResponses[2] = oldEzpass; }
 });

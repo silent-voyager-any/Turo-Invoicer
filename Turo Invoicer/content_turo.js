@@ -125,11 +125,27 @@
     }
   }
 
+  function historyCompleteness(records) {
+    const links = [...document.querySelectorAll('a[data-testid="baseTripCard"][href]')]
+      .map((link) => linkId(link, "trip")).filter(Boolean);
+    const visible = (node) => Boolean(node && !node.hidden && node.getAttribute?.("aria-hidden") !== "true" &&
+      (node.offsetParent !== null || node.getClientRects?.().length));
+    const busy = [...document.querySelectorAll('[aria-busy="true"], [role="progressbar"], [data-testid*="loading" i], [data-testid*="spinner" i]')]
+      .some(visible);
+    const loadMore = [...document.querySelectorAll("button, a")].some((node) =>
+      visible(node) && /^(?:load|show) more(?: trips)?$/i.test(String(node.textContent || node.getAttribute?.("aria-label") || "").trim()));
+    const footer = [...document.querySelectorAll("footer")].some(visible);
+    return links.length > 0 && records.length > 0 && footer && !busy && !loadMore
+      ? { complete: true, pageCount: 1, terminalReason: "history_footer" }
+      : { complete: false, pageCount: 1, terminalReason: null };
+  }
+
   // The shared MutationObserver wraps readDom and wakes COLLECT_NOW when a
   // complete trip (vehicle ID + both times), not a skeleton, becomes available.
   // Network responses can satisfy the same pending request during SPA loading.
   createCapture("turo", parseTrip, readDom, {
     enrichment: TuroDetails.create(parseTrip),
+    completeness: historyCompleteness,
     isPageAllowed: (path) => path === HISTORY_PATH,
     pageMessage: "Turo collection is restricted to /us/en/trips/history. Open that page and sync again.",
     waitTimeoutMs: 20000,

@@ -76,12 +76,17 @@
     const waitTimeoutMs = Math.min(20000, Math.max(0, options.waitTimeoutMs || 0));
     const settleMs = Math.max(0, options.settleMs ?? 300);
     const records = () => [...(network.size ? network : dom).values()];
-    const snapshot = (current = records()) => ({
-      ok: true, source, records: current, ...(options.isPageAllowed ? { pagePath: capturePath } : {}),
-      complete: false, pageCount: 1, rawCount: current.length,
-      warning: capped ? "Capture limit reached; narrow the portal date range and reload." :
-        "Only loaded records are included; pagination and completeness are not verified."
-    });
+    const snapshot = (current = records()) => {
+      const proof = options.completeness?.(current) || {};
+      const complete = proof.complete === true && !capped;
+      return {
+        ok: true, source, records: current, ...(options.isPageAllowed ? { pagePath: capturePath } : {}),
+        complete, pageCount: Number.isInteger(proof.pageCount) ? proof.pageCount : 1,
+        rawCount: current.length, terminalReason: proof.terminalReason || null,
+        warning: capped ? "Capture limit reached; narrow the portal date range and reload." : complete ? null :
+          "Only loaded records are included; pagination and completeness are not verified."
+      };
+    };
     const notify = () => { for (const check of [...pending]) check(); };
     function checkPage() {
       const path = pagePath();
@@ -138,7 +143,17 @@
           if (latest?.pending || latest?.error || latest && JSON.stringify(latest.records) !== signature) {
             lastSignature = null;
             check();
-          } else finish(snapshot(current));
+          } else {
+            const result = snapshot(current);
+            // Adapters with an explicit terminal proof (currently Turo
+            // history) must keep waiting after records first appear. A stable
+            // partial list is not a complete history snapshot.
+            if (typeof options.completeness === "function" && !result.complete) {
+              lastSignature = null;
+              return;
+            }
+            finish(result);
+          }
         }, settleMs);
       };
       check.cancel = (error) => finish({ ok: false, source, error });

@@ -1,6 +1,6 @@
 # Turo Invoicer product plan
 
-Last reviewed: September 6, 2026. This document is the implementation source of truth for the local-first Chrome extension.
+Last reviewed: September 6, 2026. Release 0.4.7 completes personal-use terminal collection and normalized Turo toll-invoice verification. Evidence capture and submission remain disabled. This document is the implementation source of truth for the local-first Chrome extension.
 
 The detailed trip-centric discovery, selection, evidence, and batch experience is specified in [TRIP_BATCH_WORKFLOW.md](TRIP_BATCH_WORKFLOW.md).
 
@@ -117,6 +117,10 @@ Invoice draft states are `needs_mapping`, `needs_evidence`, `ready`, `approved`,
 ### M1.5 — Trip workspace — complete
 
 - Schema-4 migration, four dashboard pages, one draft per completed trip, nested unique vehicle-confirmed tolls, persistent multi-selection, completeness/status blockers, and integer-cent totals.
+
+### M1.6 — Verified collection and eligibility — complete for personal use
+
+- Stable terminal Turo history, bounded reservation details, one temporary invoice-status tab, existing-Tolls detection, 90-day eligibility gating, and resilient E-ZPass accessible pagination with transient-placeholder handling.
 
 ### M2 — Evidence capture
 

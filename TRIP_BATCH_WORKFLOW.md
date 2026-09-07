@@ -1,6 +1,6 @@
 # Trip-centric toll reconciliation and batch workflow
 
-Last reviewed: September 6, 2026. Version 0.4.1 implements the schema-4 trip workspace, vehicle cards, canonical tag/plate mapping, nested confirmed tolls, four dashboard pages, and persistent selection. Complete pagination, verified Turo invoice status, evidence, and submission remain required behavior rather than completed capabilities.
+Last reviewed: September 6, 2026. Version 0.4.7 implements the schema-4 trip workspace, vehicle cards, canonical tag/plate mapping, terminal Turo/E-ZPass collection proofs, normalized Turo toll-invoice status, nested confirmed tolls, four dashboard pages, and persistent selection. Evidence and submission remain required behavior rather than completed capabilities.
 
 ## Goal
 
@@ -10,11 +10,11 @@ Turn the dashboard into a fleet-first workspace that finds every completed, reim
 
 ## Why the current dashboard is incomplete
 
-- Turo collection reads only history cards currently loaded in the page and rejects more than 50 discovered reservations. It does not paginate the complete history.
-- E-ZPass collection reads only transaction records already loaded by the current page/API responses. It does not request every result page.
+- Turo history now requires stable numeric reservation cards, resolved details, no loader, and the terminal footer; it remains bounded to the portal history view and 50 discovered reservations.
+- E-ZPass collection now rewinds the unfiltered history, selects 100 rows when available, and traverses the accessible pager to a proven terminal condition.
 - The dashboard has trip cards and selection, but evidence and submission remain blocked until complete portal collectors and invoice-state verification exist.
 - A toll becomes vehicle-confirmed only when its captured tag or plate resolves through a dated fleet assignment to the trip's Turo vehicle ID. Raw identifiers remain visible; exact canonical comparison ignores formatting while preserving leading zeros.
-- The Turo adapter currently knows trip times and vehicle ID, but it does not yet determine whether a toll reimbursement invoice already exists.
+- The Turo adapter now checks deduplicated invoice details for Tolls and verifies the enabled TOLLS request option for otherwise uncharged trips.
 
 ## Required user workflow
 
@@ -138,7 +138,7 @@ No guest name, messages, addresses, cookies, request headers, passwords, or raw 
 ## Implementation sequence
 
 1. **Fleet UX:** separate Vehicles page, multi-vehicle editor, discovered Turo vehicle picker, and assignment diagnostics.
-2. **Complete collectors:** fixture-backed Turo history pagination, toll-invoice status adapter, E-ZPass date-range pagination, progress, caps, cancellation, and completeness proofs.
+2. **Complete collectors — implemented in 0.4.7 for personal use:** fixture-backed terminal Turo history, toll-invoice status adapter, E-ZPass range pagination, caps, cancellation, and completeness proofs.
 3. **Trip workspace:** trip-centric grouping, toll/trip checkboxes, review queue, integer-cent totals, filtering, and persisted selections.
 4. **Evidence:** explicit active-tab capture, row-visibility verification, IndexedDB storage, hashing, previews, quota handling, and retention.
 5. **Batch engine:** immutable review, duplicate ledger, dry-run Turo adapter, sequential submission, stop/recovery rules, and one separately authorized live acceptance test.

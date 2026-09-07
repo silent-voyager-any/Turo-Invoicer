@@ -4,7 +4,7 @@ A local-first Chrome extension that helps Turo hosts reconcile NY E-ZPass toll a
 
 The extension observes data loaded in your signed-in browser tabs, matches toll timestamps to trip intervals, and presents suggestions for review. It does not require a server, store portal passwords, or submit reimbursement claims.
 
-> **Status: development scaffold, version 0.4.1.** The dashboard groups confirmed toll matches beneath completed trips, distinguishes Turo vehicle IDs from toll identifiers, and provides persistent toll/trip selection. Complete pagination, Turo invoice-status verification, evidence capture, and invoice submission remain safety-gated milestones.
+> **Status: personal-use reconciliation release, version 0.4.7.** The extension proves Turo history completion, paginates the E-ZPass transaction history, verifies existing Turo toll invoices, and groups confirmed toll matches beneath eligible trips. Evidence capture and reimbursement submission remain disabled.
 
 ## Features
 
@@ -19,7 +19,11 @@ The extension observes data loaded in your signed-in browser tabs, matches toll 
 - Local snapshots, atomic two-source sync, and a clear-data control.
 - No backend uploads, analytics, remote scripts, or automatic claim submission.
 
-## Version 0.4.1 update
+## Version 0.4.7 update
+
+E-ZPass pagination now follows the portal's visible accessible pager, ignores the transient “No transactions found” placeholder during page changes, and selects 100 rows per page when available. Turo history is accepted only with stable numeric reservation cards and its terminal footer. A single temporary inactive Turo tab checks each completed reservation's invoice hub, deduplicated invoice-detail pages, and toll-request eligibility; it is always closed after verification. Only normalized status metadata is stored.
+
+Version 0.4.1 introduced the vehicle-mapping workspace:
 
 Vehicle cards now show the discovered name and registration plate while labeling the numeric Turo vehicle ID as an internal reference, never an E-ZPass tag. Confirmed tags and plates compare exact canonical forms: formatting separators and an explicit plate-state prefix are ignored, but leading zeros remain significant. Needs review shows each unresolved toll once and can prefill—never silently save—a mapping for its time-matched vehicle. Schema 4 data migrates without clearing fleet assignments.
 
@@ -57,7 +61,7 @@ npm test
 npm run check
 ```
 
-The current suite contains 84 tests. Checks cover manifest references, the intended permissions, and JavaScript syntax. Tests use synthetic data and mocked Chrome/DOM interfaces; authenticated smoke-check account data is never committed.
+The current suite contains 109 tests. Checks cover manifest references, the intended permissions, and JavaScript syntax. Tests use synthetic data and mocked Chrome/DOM interfaces; authenticated smoke-check account data is never committed.
 
 ## Documentation
 
@@ -96,7 +100,7 @@ Turo Invoicer/              Load this folder as the extension
 
 ## Important limitations
 
-Only loaded records are captured; pagination, statement totals, account ownership, and history completeness are not verified. Private portal schemas may change. Network capture takes precedence over DOM capture, and missing stable IDs can collapse identical-looking transactions. Clear captures and reload before switching accounts or date-range workflows.
+Authenticated portal adapters remain private-UI integrations and may change. The current release proves terminal Turo history and E-ZPass pagination states, but it does not verify statement totals or account ownership. Network capture takes precedence over DOM capture, and missing stable IDs can collapse identical-looking transactions. Clear captures and reload before switching accounts.
 
 A timestamp-only suggestion does not establish vehicle identity. Static mappings cannot safely represent a transponder moved between vehicles over time. The project is not an official integration with Turo or E-ZPass and makes no guarantee about portal access or anti-bot behavior.
 

@@ -11,15 +11,17 @@ Portal's normal authenticated requests
   -> content_common.js + portal adapter (ISOLATED world)
        ^ MutationObserver / DOM fallback
        |
-Popup/dashboard -- RUN_SYNC --> service worker -- COLLECT_NOW --> each source tab
-Popup/dashboard <-- results --- service worker <-- records ------- each source tab
+Popup/dashboard -- RUN_SYNC --> service worker -- COLLECT_NOW --> Turo history
+                                      |-- temporary inactive Turo status tab
+                                      `-- COLLECT_NOW --> E-ZPass transactions
+Popup/dashboard <-- results --- service worker <-- normalized records/status
                             |
                      reconciler.js
                             |
                      chrome.storage.local
 ```
 
-The portal owns authentication. The worker does not recreate authenticated HTTP calls or move credentials across domains. Cross-domain orchestration here means asking the two tab-local collectors for records. During explicit collection, the isolated Turo reader can additionally GET a narrowly allowlisted reservation-detail JSON endpoint for numeric links discovered in loaded history cards, using the same-origin browser session.
+The portal owns authentication. The worker does not recreate authenticated HTTP calls or move credentials across domains. Cross-domain orchestration asks tab-local collectors for reduced records. During explicit collection, the Turo reader can GET a narrowly allowlisted reservation-detail endpoint. The worker then reuses one inactive Turo tab for exact invoice-hub, invoice-detail, and toll-option pages before collecting E-ZPass.
 
 ## Manifest and loading
 
@@ -43,7 +45,11 @@ DOM capture is a fallback. Turo requires a stable vehicle ID and both times; dis
 
 The verified response adapter prefers `tripStart.epochMillis` and `tripEnd.epochMillis`, with complete `localDate` plus `localTime` pairs as a defensive fallback. `vehicle.id` supplies the Turo identity and `statusCode` participates in cancellation filtering. Only the reduced reservation ID, vehicle ID, start, and end survive parsing; unrelated response fields are not returned to the worker. Cancelled reservations are omitted, and missing or conflicting details fail the batch.
 
-Each collection accumulates discovered IDs to tolerate virtualization. Once linked cards exist, only these reservations are returned; all must resolve before success. No automatic pagination is attempted. Detail jobs start only during `COLLECT_NOW` and are discarded after the last waiter ends. Clear/navigation abort outstanding reads and invalidate late results. Full timestamps and vehicle IDs are required; abbreviated month/day labels and model names are insufficient. The response shape was inspected in an authenticated browser and is covered by a redacted synthetic fixture; continued portal compatibility is not guaranteed.
+Each collection accumulates discovered IDs to tolerate virtualization. Once linked cards exist, only these reservations are returned; all must resolve before success. History is complete only after cards stabilize, no loader remains, and the terminal footer is visible. Detail jobs start only during `COLLECT_NOW` and are discarded after the last waiter ends. Clear/navigation abort outstanding reads and invalidate late results. Full timestamps and vehicle IDs are required; abbreviated labels and model names are insufficient.
+
+### Turo invoice status
+
+After history collection, the worker opens one temporary inactive Turo tab and closes it in `finally`. The status adapter accepts only exact numeric reservation routes. It deduplicates invoice-detail links rendered for multiple layouts and treats a `Tolls` item inside the verified invoice overview as `already_charged`, regardless of open/resolved/paid/disputed display state. When no toll invoice exists, the exact select-incidental page must expose an enabled `TOLLS` option. Trips within the standard 90-day window then become `eligible_uncharged`; older trips fail closed as `ineligible`; unknown layouts, challenges, and navigation failures become `status_unknown`. Only normalized status, reason, deadline, verification time, and adapter revision are stored.
 
 ## Portal SPA lifecycle
 
@@ -55,9 +61,9 @@ Each collection accumulates discovered IDs to tolerate virtualization. Once link
 6. At 20 seconds, available records are returned even if the batch never settled, unless Turo details remain unresolved or failed; those conditions return an error and preserve prior results. Otherwise an empty capture returns an actionable timeout error.
 7. Deadline and settle timers are cleared when the request finishes. Clearing or navigating cancels pending requests. The observer disconnects on page hide and reattaches on page show, including back/forward restoration.
 
-Skeletons alone do not satisfy the wait. Structural completeness does not imply valid dates; the reconciler performs timestamp validation later. Settling does not prove complete pagination. E-ZPass uses the same delayed collection. Route changes clear captures and cancel pending waits.
+Skeletons alone do not satisfy the wait. Structural completeness does not imply valid dates; the reconciler performs timestamp validation later. Route changes clear captures and cancel pending waits.
 
-Version 0.4.6 avoids E-ZPass filter controls. After Turo supplies the required coverage, the content script rewinds the existing transaction list to page 1 and reads sequential pages. It can stop after a fully older page only when the Transaction Date header explicitly reports descending sort and observed page boundaries remain monotonic; otherwise it continues to disabled Next. `Lane Txn ID` deduplicates normalized tolls, and any active filter, stalled/repeated page, missing pager, route change, timeout, or cap preserves the prior snapshot.
+Version 0.4.7 avoids E-ZPass filter controls. After Turo supplies the required coverage, the content script rewinds to page 1, selects 100 rows when available, and follows the visible accessible pager. It requires the unique current page number to advance and rows to stabilize; the portal's transient empty placeholder cannot terminate an in-progress navigation. It stops at disabled Next or a chronology-proven older page. `Lane Txn ID` deduplicates tolls, and any active filter, stalled/repeated page, missing pager, route change, timeout, or cap preserves the prior snapshot.
 
 ## Dashboard and fleet state
 
@@ -84,7 +90,8 @@ These are internal extension messages, not a public web API.
 | Dashboard -> worker | `SELECT_ALL_READY` | `selected` | `ok, state` |
 | Dashboard -> worker | `PREPARE_BATCH` | None | Error until evidence adapters are verified |
 | Popup/dashboard -> worker | `CLEAR_LOCAL_DATA` | None | `ok, state, resetFailures` |
-| Worker -> collector | `COLLECT_NOW` | None | `ok, source, records, pagePath, warning`, or error |
+| Worker -> collector | `COLLECT_NOW` | optional `range` | `ok, source, records, complete, pageCount, terminalReason`, or error |
+| Worker -> temporary Turo tab | `COLLECT_INVOICE_STATUS` | None; route supplies identity | Reduced hub/invoice/select-incidental status only |
 | Worker -> collector | `CLEAR_CAPTURE` | None | `ok` |
 | MAIN -> ISOLATED | `NETWORK_RESPONSE` | `source: "turo-toll-reconciler-page", payload` | No response |
 
@@ -94,9 +101,9 @@ Privileged worker operations accept only the exact extension popup or dashboard 
 
 ## State and concurrency
 
-The worker queues popup/dashboard operations to serialize read-modify-write state updates. Within one sync, the two tab requests run concurrently. Exactly one matching data-page tab must exist per source; other pages are ignored.
+The worker queues popup/dashboard operations to serialize read-modify-write state updates. A sync is ordered: Turo history, Turo status verification, then E-ZPass for the derived range. Exactly one matching data-page tab must exist per source; the worker-managed inactive Turo status tab is temporary.
 
-The worker allows 25 seconds for either source collection; ordinary tab operations retain 5 seconds. It rechecks the page after collection and filters Turo to valid completed intervals. Both successful nonempty source batches are sanitized, reconciled, and saved together in one storage item. A source error preserves the previous snapshot. This is not a cross-portal transactional snapshot or a completeness guarantee.
+The worker uses bounded tab messages and a five-minute E-ZPass collection deadline. It rechecks source routes and filters Turo to valid completed intervals. Successful complete source batches are sanitized, reconciled, and saved together in one storage item. A source error preserves the previous snapshot.
 
 Updates to settings or fleet assignments recalculate the current records without changing source refresh times and revalidate draft selections. Schema 4 preserves schema-3 sources and fleet assignments but does not upgrade their completeness or invoice status. Timeout diagnostics contain only DOM-candidate and JSON-response counts. On worker restart, persisted state and selections are rebuilt from canonical records. Pending work is not resumable across arbitrary worker/browser termination; retry sync if interrupted.
 

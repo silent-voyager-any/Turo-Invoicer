@@ -39,19 +39,20 @@ test("proves descending page chronology and rejects boundary reversals", () => {
 });
 
 function portalFixture({ pages, startPage = 0, activeFilter = false, descendingSort = true,
-  repeatNext = false, omitPrevious = false, omitNext = false }) {
+  repeatNext = false, omitPrevious = false, omitNext = false, transientEmptyMs = 0 }) {
   let pageIndex = startPage;
+  let loading = false;
   const clicks = { previous: 0, next: 0, transactionDate: 0, filter: 0, search: 0 };
   const visible = () => ({ length: 1 });
   const previous = {
     textContent: "Go to previous page", hidden: false, get offsetParent() { return {}; }, getClientRects: visible,
-    get disabled() { return pageIndex === 0; }, getAttribute: () => null,
-    click() { clicks.previous += 1; pageIndex = Math.max(0, pageIndex - 1); }
+    get disabled() { return pageIndex === 0; }, getAttribute: (name) => name === "aria-label" ? "Go to previous page" : null,
+    click() { clicks.previous += 1; pageIndex = Math.max(0, pageIndex - 1); if (transientEmptyMs) { loading = true; setTimeout(() => { loading = false; }, transientEmptyMs); } }
   };
   const next = {
     textContent: "Go to next page", hidden: false, get offsetParent() { return {}; }, getClientRects: visible,
-    get disabled() { return pageIndex === pages.length - 1; }, getAttribute: () => null,
-    click() { clicks.next += 1; if (!repeatNext) pageIndex = Math.min(pages.length - 1, pageIndex + 1); }
+    get disabled() { return pageIndex === pages.length - 1; }, getAttribute: (name) => name === "aria-label" ? "Go to next page" : null,
+    click() { clicks.next += 1; if (!repeatNext) pageIndex = Math.min(pages.length - 1, pageIndex + 1); if (transientEmptyMs) { loading = true; setTimeout(() => { loading = false; }, transientEmptyMs); } }
   };
   const unrelated = ["Transaction Date", "Filter", "Search"].map((text) => ({
     textContent: text, hidden: false, disabled: false, get offsetParent() { return {}; }, getClientRects: visible,
@@ -66,22 +67,36 @@ function portalFixture({ pages, startPage = 0, activeFilter = false, descendingS
     getClientRects: visible, labels: [],
     getAttribute: (name) => name === "aria-label" ? "Start Date" : name === "placeholder" ? "MM/DD/YY" : null
   };
+  const active = {
+    get textContent() { return String(pageIndex + 1); }, hidden: false, disabled: false,
+    get offsetParent() { return {}; }, getClientRects: visible,
+    getAttribute: (name) => name === "aria-label" ? `page ${pageIndex + 1}` : name === "aria-current" ? "true" : null
+  };
+  const pager = {
+    hidden: false, get offsetParent() { return {}; }, getClientRects: visible,
+    querySelectorAll(selector) {
+      return selector === "button, [role='button'], input[type='submit'], input[type='button']" ?
+        [...(omitPrevious ? [] : [previous]), active, ...(omitNext ? [] : [next])] : [];
+    }
+  };
   const main = {
     querySelectorAll(selector) {
+      if (selector.includes('nav[aria-label="pagination navigation"]')) return [pager];
       if (selector === "button, [role='button'], input[type='submit'], input[type='button']") {
-        return [...(omitPrevious ? [] : [previous]), ...(omitNext ? [] : [next]), ...unrelated];
+        return [...(omitPrevious ? [] : [previous]), active, ...(omitNext ? [] : [next]), ...unrelated];
       }
+      if (selector === '[role="combobox"][aria-label="View"]') return [];
       if (selector === "input") return [filterInput];
       if (selector === "th, [role='columnheader']") return [dateHeader];
       return [];
     }
   };
   context.document = {
-    body: { textContent: "" },
+    body: { get textContent() { return loading ? "No transactions found" : ""; } },
     querySelector: (selector) => selector === "main, [role='main']" ? main : null,
     querySelectorAll: (selector) => main.querySelectorAll(selector)
   };
-  const readDom = (add) => pages[pageIndex].forEach(add);
+  const readDom = (add) => { if (!loading) pages[pageIndex].forEach(add); };
   const parseRecord = (row) => row.amount ? {
     id: row.id, timestamp: row.timestamp, plaza: row.plaza || "Example", amount: row.amount
   } : null;
@@ -118,6 +133,18 @@ test("without explicit descending sort proof collection continues to disabled Ne
   assert.equal(result.terminalReason, "next_disabled");
   assert.equal(result.ordering, "unverified");
   assert.deepEqual(clone(result.records).map(({ id }) => id), ["match"]);
+});
+
+test("transient empty placeholder after Next is not treated as a terminal page", async () => {
+  const fixture = portalFixture({ transientEmptyMs: 500, pages: [
+    [{ id: "new", timestamp: "09/05/2026 1:00 PM", amount: "-$1" }],
+    [{ id: "match", timestamp: "08/20/2026 1:00 PM", amount: "-$2" }]
+  ] });
+  const result = await api.collect({ range: { startDate: "2026-08-01", endDate: "2026-08-31" },
+    parseRecord: fixture.parseRecord, readDom: fixture.readDom });
+  assert.deepEqual(clone(result.records).map(({ id }) => id), ["match"]);
+  assert.equal(result.lastPage, 2);
+  assert.equal(result.terminalReason, "next_disabled");
 });
 
 test("active portal filters fail without retaining their values", async () => {

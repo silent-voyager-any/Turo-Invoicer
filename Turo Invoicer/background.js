@@ -1,4 +1,4 @@
-import { canonicalizeIdentifier, DEFAULT_TIME_ZONE, reconcileTolls, selectCompletedTrips, tripCollectionRange } from "./reconciler.js";
+import { canonicalizeIdentifier, DEFAULT_TIME_ZONE, normalizeTrip, reconcileTolls, selectCompletedTrips, tripCollectionRange } from "./reconciler.js";
 import { buildTripWorkspace, selectAllReady, setTollSelection, setTripSelection, summarizeSelection } from "./workspace.js";
 
 const STORAGE_KEY = "turoTollReconcilerState";
@@ -6,7 +6,9 @@ const PATTERNS = { turo: ["https://turo.com/*"], ezpass: ["https://www.e-zpassny
 const MAX_RECORDS = 5000;
 const HISTORY_PATH = "/us/en/trips/history";
 const TRANSACTIONS_PATH = "/ezpass/dashboard/transactions";
-const EZPASS_COLLECTOR_REVISION = "0.4.6-history-pagination-1";
+const EZPASS_COLLECTOR_REVISION = "0.4.7-history-pagination-2";
+const TURO_INVOICE_ADAPTER_REVISION = "0.4.7-invoice-dom-1";
+const STANDARD_TOLL_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const TRUSTED_PAGES = new Set(["popup.html", "dashboard.html"]);
 const isTransactionsUrl = (url) => {
   try {
@@ -134,7 +136,7 @@ function scalar(value) {
 function sanitizeRecords(source, raw) {
   if (!Array.isArray(raw) || raw.length > MAX_RECORDS) throw new Error("Invalid record batch.");
   const fields = source === "turo"
-    ? ["id", "vehicleId", "start", "end", "vehicleLabel", "vehiclePlate", "invoiceStatus", "invoiceDeadline"]
+    ? ["id", "vehicleId", "start", "end", "vehicleLabel", "vehiclePlate", "invoiceStatus", "invoiceStatusReason", "invoiceDeadline"]
     : ["id", "timestamp", "plaza", "amount", "tagId", "plate", "tagOrPlate", "vehicleId"];
   const records = new Map();
   for (const candidate of raw) {
@@ -164,6 +166,89 @@ async function tabRequest(tabId, message, timeoutMs = 5000) {
   }
 }
 
+const hubUrl = (id) => `https://turo.com/us/en/reservation/${id}/invoice-hub`;
+const selectIncidentalUrl = (id) => `https://turo.com/us/en/reservation/${id}/reimbursement/request/select-incidental`;
+
+function validInvoiceUrl(raw, id) {
+  try {
+    const url = new URL(raw);
+    const valid = url.origin === "https://turo.com" && !url.username && !url.password && !url.hash &&
+      url.pathname.replace(/\/$/, "") === `/us/en/reservation/${id}/reimbursement/invoice` &&
+      url.searchParams.getAll("invoiceId").length === 1 && /^\d{1,20}$/.test(url.searchParams.get("invoiceId") || "") &&
+      [...url.searchParams.keys()].every((key) => key === "invoiceId");
+    return valid ? url.href : null;
+  } catch { return null; }
+}
+
+async function readManagedTuroPage(tabId, url, reservationId, expectedPhase) {
+  const updated = await chrome.tabs.update(tabId, { url, active: false });
+  if (updated?.id !== tabId) throw new Error("Turo status tab changed unexpectedly.");
+  const deadline = Date.now() + 15000;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab?.url === url && tab.status === "complete") {
+      try {
+        const response = await tabRequest(tabId, { type: "COLLECT_INVOICE_STATUS", reservationId }, 3000);
+        if (response?.ok && response.phase === expectedPhase) return response;
+        lastError = new Error(response?.error || "Turo invoice-status adapter returned an unexpected view.");
+      } catch (error) { lastError = error; }
+    } else if (tab?.url && !tab.url.startsWith("https://turo.com/")) {
+      throw new Error("Turo invoice verification left the permitted origin.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw lastError || new Error("Turo invoice verification timed out.");
+}
+
+async function verifyTuroInvoiceStatuses(records, timeZone) {
+  if (!records.length) return records;
+  const firstId = String(records[0].id || "");
+  if (!/^\d{1,20}$/.test(firstId)) throw new Error("Turo history returned an invalid reservation ID for invoice verification.");
+  let managedTab = null;
+  const verified = [];
+  try {
+    managedTab = await chrome.tabs.create({ url: hubUrl(firstId), active: false });
+    if (!Number.isInteger(managedTab?.id)) throw new Error("Could not create the temporary Turo status tab.");
+    for (const trip of records) {
+      const id = String(trip.id || "");
+      const normalized = normalizeTrip(trip, timeZone);
+      const deadlineMs = normalized?.endMs + STANDARD_TOLL_WINDOW_MS;
+      const invoiceDeadline = Number.isFinite(deadlineMs) ? new Date(deadlineMs).toISOString() : null;
+      if (!/^\d{1,20}$/.test(id) || !invoiceDeadline) {
+        verified.push({ ...trip, invoiceStatus: "status_unknown", invoiceStatusReason: "invalid_trip_identity_or_end", invoiceDeadline });
+        continue;
+      }
+      if (Date.now() > deadlineMs) {
+        verified.push({ ...trip, invoiceStatus: "ineligible", invoiceStatusReason: "standard_window_expired", invoiceDeadline });
+        continue;
+      }
+      try {
+        const hub = await readManagedTuroPage(managedTab.id, hubUrl(id), id, "hub");
+        let hasTolls = false;
+        const invoiceUrls = [...new Set((hub.invoiceUrls || []).map((url) => validInvoiceUrl(url, id)).filter(Boolean))];
+        for (const invoiceUrl of invoiceUrls) {
+          const invoice = await readManagedTuroPage(managedTab.id, invoiceUrl, id, "invoice");
+          if (invoice.hasTolls === true) { hasTolls = true; break; }
+        }
+        if (hasTolls) {
+          verified.push({ ...trip, invoiceStatus: "already_charged", invoiceStatusReason: "existing_toll_invoice", invoiceDeadline });
+          continue;
+        }
+        if (!hub.canCreate) throw new Error("Turo did not offer invoice creation for this completed trip.");
+        const select = await readManagedTuroPage(managedTab.id, selectIncidentalUrl(id), id, "select");
+        if (!select.tollOptionAvailable) throw new Error("Turo did not offer the toll incidental for this trip.");
+        verified.push({ ...trip, invoiceStatus: "eligible_uncharged", invoiceStatusReason: "toll_request_available", invoiceDeadline });
+      } catch {
+        verified.push({ ...trip, invoiceStatus: "status_unknown", invoiceStatusReason: "invoice_view_unverified", invoiceDeadline });
+      }
+    }
+  } finally {
+    if (Number.isInteger(managedTab?.id)) await chrome.tabs.remove(managedTab.id).catch(() => {});
+  }
+  return verified;
+}
+
 async function collect(source, request = {}) {
   let tabs = await chrome.tabs.query({ url: PATTERNS[source] });
   if (source === "turo") tabs = tabs.filter((tab) => isHistoryUrl(tab.url));
@@ -188,6 +273,9 @@ async function collect(source, request = {}) {
       if (response?.source !== source || !response.ok) throw new Error(response?.error || "Unexpected portal response.");
     if (source === "turo" && response.pagePath !== HISTORY_PATH) throw new Error("Reload the extension and Turo history tab; the history-only collector is not active.");
     if (source === "ezpass" && response.pagePath !== TRANSACTIONS_PATH) throw new Error("Reload the extension and E-ZPass transactions tab; the transactions collector is not active.");
+    if (source === "turo" && response.complete !== true) {
+      throw new Error("Turo history did not reach a stable terminal footer. Wait for the full history list to load, then sync again.");
+    }
     const current = (await chrome.tabs.query({ url: PATTERNS[source] })).find((tab) => tab.id === tabs[0].id);
     if (!(source === "turo" ? isHistoryUrl(current?.url) : isTransactionsUrl(current?.url))) {
       throw new Error("Portal left the supported data page during sync. Return and retry.");
@@ -213,7 +301,8 @@ async function collect(source, request = {}) {
       terminalReason: typeof response.terminalReason === "string" ? response.terminalReason.slice(0, 100) : null,
       completeForRange: response.completeForRange === true,
       observedRange: response.observedRange || null,
-      ordering: ["descending", "unverified"].includes(response.ordering) ? response.ordering : "unverified"
+      ordering: ["descending", "unverified"].includes(response.ordering) ? response.ordering : "unverified",
+      lastPage: Number.isInteger(response.lastPage) && response.lastPage > 0 ? response.lastPage : null
     };
   } catch (error) {
     return { source, ok: false, error: error.message || "Reload the portal tab after installation." };
@@ -226,15 +315,21 @@ async function runSync() {
   const turo = await collect("turo");
   if (!turo.ok) return { state: await getState(), collection: { turo, ezpass: { ok: false, error: "E-ZPass was not started because Turo collection failed." } }, synced: false };
   const currentState = await getState();
+  try {
+    turo.records = await verifyTuroInvoiceStatuses(turo.records, currentState.settings.timeZone);
+  } catch (error) {
+    return { state: currentState, collection: { turo: { ...turo, ok: false, error: error.message },
+      ezpass: { ok: false, error: "E-ZPass was not started because Turo invoice verification failed." } }, synced: false };
+  }
   const verifiedUncharged = turo.records.filter((trip) => trip.invoiceStatus === "eligible_uncharged");
-  const coverageTrips = verifiedUncharged.length ? verifiedUncharged : turo.records.filter((trip) =>
-    !["already_charged", "ineligible"].includes(trip.invoiceStatus));
+  const unknownTrips = turo.records.filter((trip) => trip.invoiceStatus === "status_unknown");
+  const coverageTrips = verifiedUncharged.length ? verifiedUncharged : unknownTrips.length ? unknownTrips : turo.records;
   const range = tripCollectionRange(coverageTrips, {
     timeZone: currentState.settings.timeZone, graceMinutes: currentState.settings.graceMinutes
   });
   if (!range) return { state: currentState, collection: { turo, ezpass: { ok: false, error: "No completed-trip coverage range is available." } }, synced: false };
   turo.range = range;
-  if (!verifiedUncharged.length) {
+  if (!verifiedUncharged.length && unknownTrips.length) {
     turo.warning = [turo.warning, "Turo toll-invoice status is unverified; E-ZPass coverage uses all completed trips."].filter(Boolean).join(" ");
   }
   const ezpass = await collect("ezpass", { range });
@@ -260,13 +355,16 @@ async function runSync() {
       terminalReason: result.terminalReason || null,
       completeForRange: result.source === "ezpass" ? result.completeForRange === true : result.complete === true,
       observedRange: result.observedRange || null,
-      ordering: result.ordering || null
+      ordering: result.ordering || null,
+      lastPage: result.lastPage || null
     };
   }
   state.tripEligibility = Object.fromEntries(state.sources.turo.records.map((trip) => [String(trip.id), {
     status: ["eligible_uncharged", "already_charged", "ineligible", "status_unknown"].includes(trip.invoiceStatus)
       ? trip.invoiceStatus : "status_unknown",
     deadline: trip.invoiceDeadline || null,
+    reason: trip.invoiceStatusReason || null,
+    adapterRevision: TURO_INVOICE_ADAPTER_REVISION,
     checkedAt: now
   }]));
   state.lastSync = now;

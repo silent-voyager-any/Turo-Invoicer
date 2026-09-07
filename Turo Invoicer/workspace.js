@@ -75,6 +75,7 @@ export function buildTripWorkspace({
       startMs: trip.startMs,
       endMs: trip.endMs,
       eligibility,
+      eligibilityReason: eligibilityRecord.reason || null,
       eligibilityDeadline: eligibilityRecord.deadline || null,
       tolls,
       selectedTollIds,

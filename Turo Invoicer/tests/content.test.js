@@ -42,7 +42,7 @@ function adapter(file) {
 
 test("E-ZPass adapter combines transaction date/time and discards extra fields", () => {
   const { parse, options } = adapter("content_ezpass.js");
-  assert.equal(options.collectorRevision, "0.4.6-history-pagination-1");
+  assert.equal(options.collectorRevision, "0.4.7-history-pagination-2");
   const record = parse({
     transactionId: "1", transactionDate: "07/01/2026", transactionTime: "12:30 PM",
     plazaName: "Lincoln", amount: "$15.00", tagNumber: "00123", vehicleId: "agency-only-id",
@@ -104,6 +104,20 @@ test("Turo adapter keeps epochs, requires vehicle ID, and signals cancellations"
   assert.equal(liveShape.end, 1788116400000);
   assert.equal(parse({ id: "1", start: "2026-07-01 12:00", end: "2026-07-01 13:00" }), null);
   assert.equal(parse({ id: "1", statusCode: "CANCELED" })._remove, true);
+});
+test("Turo history is complete only with stable cards and a visible terminal footer", () => {
+  const { document, options } = adapter("content_turo.js");
+  const visible = { hidden: false, offsetParent: {}, getClientRects: () => ({ length: 1 }), getAttribute: () => null };
+  const link = { ...visible, getAttribute: (name) => name === "href" ? "/us/en/reservation/123" : null };
+  document.querySelectorAll = (selector) => {
+    if (selector === 'a[data-testid="baseTripCard"][href]') return [link];
+    if (selector === "footer") return [visible];
+    return [];
+  };
+  assert.deepEqual(JSON.parse(JSON.stringify(options.completeness([{ id: "123" }]))),
+    { complete: true, pageCount: 1, terminalReason: "history_footer" });
+  document.querySelectorAll = (selector) => selector === 'a[data-testid="baseTripCard"][href]' ? [link] : [];
+  assert.equal(options.completeness([{ id: "123" }]).complete, false);
 });
 test("DOM dataset fallback extracts toll rows", () => {
   const { document, readDom } = adapter("content_ezpass.js");
@@ -174,7 +188,16 @@ function liveTuro() {
   vm.runInContext(readFileSync("content_turo.js", "utf8"), env.context);
   const answers = [];
   const collect = () => env.listeners.runtime({ type: "COLLECT_NOW" }, { id: "test-extension" }, (value) => answers.push(value));
-  const rows = (values) => { env.document.querySelectorAll = (selector) => selector.startsWith("[data-trip-id]") ? values : []; };
+  const rows = (values) => { env.document.querySelectorAll = (selector) => {
+    if (selector.startsWith("[data-trip-id]")) return values;
+    if (selector === 'a[data-testid="baseTripCard"][href]') return values.map((row) => ({
+      hidden: false, offsetParent: {}, getClientRects: () => ({ length: 1 }),
+      getAttribute: (name) => name === "href" ? `/us/en/reservation/${row.dataset.tripId}` : null
+    }));
+    if (selector === "footer" && values.length) return [{ hidden: false, offsetParent: {},
+      getClientRects: () => ({ length: 1 }), getAttribute: () => null }];
+    return [];
+  }; };
   const mutate = () => env.observers[0].callback([]);
   return { ...env, clock, collect, answers, rows, mutate };
 }
@@ -213,6 +236,7 @@ test("attribute-only hydration waits for both trip times, not an empty card", ()
 
 test("an incoming network response also satisfies a pending Turo collection", () => {
   const env = liveTuro();
+  env.rows([completeTrip()]);
   env.collect();
   env.listeners.message({ source: env.window, origin: "https://turo.com", data: {
     source: "turo-toll-reconciler-page", type: "NETWORK_RESPONSE", pagePath: "/us/en/trips/history",
@@ -427,7 +451,12 @@ const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve()
 function detailEnvironment(ids = ["900001"]) {
   const env = liveTuro();
   const cards = ids.map(historyCard);
-  env.document.querySelectorAll = () => cards;
+  const footer = { hidden: false, offsetParent: {}, getClientRects: () => ({ length: 1 }), getAttribute: () => null };
+  env.document.querySelectorAll = (selector) => {
+    if (selector === "footer") return [footer];
+    if (selector.startsWith('[aria-busy="true"]') || selector === "button, a") return [];
+    return cards;
+  };
   const requested = [];
   env.context.fetch = async (url, options) => {
     requested.push({ url, options });

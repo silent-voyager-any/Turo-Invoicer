@@ -21,13 +21,13 @@ Detail bodies must have a JSON content type and remain within the two-million-by
 | `https://www.e-zpassny.com/*` | Inject collectors and query/message the NY portal tab |
 | `https://e-zpassny.com/*` | Support the portal's apex hostname |
 
-No `cookies`, `webRequest`, `tabs`, `scripting`, `activeTab`, `offscreen`, `declarativeNetRequest`, `unlimitedStorage`, or all-sites permission is declared. Static script injection and matching tab access use the declared host permissions. The passive page observer makes no API requests. Its body capture is restricted to the exact history and transactions page paths; origin-wide startup registration supports SPA navigation. The separate history detail reader performs only the bounded same-origin JSON GETs described above, without additional permissions.
+No `cookies`, `webRequest`, `tabs`, `scripting`, `activeTab`, `offscreen`, `declarativeNetRequest`, `unlimitedStorage`, or all-sites permission is declared. Static script injection and matching tab access use the declared host permissions. The passive page observer makes no API requests. Its body capture is restricted to the exact history and transactions page paths; origin-wide startup registration supports SPA navigation. The separate history detail reader performs only the bounded same-origin JSON GETs described above, without additional permissions. Version 0.4.7 also reuses one temporary inactive Turo tab for exact reservation invoice/status routes; it closes the tab in `finally` and stores only reduced eligibility metadata.
 
 ## Trust boundaries
 
 - **MAIN world:** runs alongside portal JavaScript. A portal can detect, modify, disable, or spoof observation. This is not an anti-tampering boundary.
 - **ISOLATED world:** validates bridge origin/source/type, bounds traversal, and reduces records. The bridge is a data channel, never a fetch/command API.
-- **Worker:** accepts privileged operations only from its own popup sender; revalidates records and settings before storage.
+- **Worker:** accepts privileged operations only from its own popup or dashboard sender; revalidates records and settings before storage.
 - **Storage:** access is restricted to `TRUSTED_CONTEXTS`, so content scripts cannot read it directly.
 - **Popup:** portal-derived text is rendered with `textContent`, not HTML injection.
 

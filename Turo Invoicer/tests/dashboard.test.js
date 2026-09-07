@@ -18,7 +18,11 @@ async function dashboard() {
     version: 4, sources: { turo: { records: [{ id: "trip", vehicleId: "car1" }] }, ezpass: { records: [{ id: "toll" }] } },
     settings: { timeZone: "America/New_York", graceMinutes: 0 }, fleet: { vehicles: [{ vehicleId: "car1", label: "Car one", sourcePlate: "NY:ABC-123", sourcePlateConfirmed: false }], assignments: [] },
     uiDrafts: { vehicleAssignment: { vehicleId: "car1", label: "Car one", kind: "tag", identifier: "001" } },
-    collectionRuns: { turo: { complete: true, pageCount: 2, recordCount: 1 }, ezpass: { complete: true, pageCount: 3, recordCount: 1 } },
+    collectionRuns: {
+      turo: { complete: true, pageCount: 1, recordCount: 1, range: { startDate: "2026-01-01", endDate: "2026-01-01" } },
+      ezpass: { complete: true, completeForRange: true, pageCount: 3, lastPage: 3, recordCount: 1,
+        requestedRange: { startDate: "2026-01-01", endDate: "2026-01-01" }, observedRange: { startDate: "2025-12-01", endDate: "2026-02-01" } }
+    },
     invoiceDrafts: [{
       reservationId: "trip", vehicleId: "car1", startMs: Date.parse("2026-01-01T14:00:00Z"), endMs: Date.parse("2026-01-01T20:00:00Z"),
       eligibility: "eligible_uncharged", tolls: [{ id: "toll", timestampMs: Date.parse("2026-01-01T16:00:00Z"), plaza: "Example", amountCents: 425, tagId: "001" }],
@@ -62,6 +66,8 @@ test("dashboard submits a dated assignment and clears the completed form", async
 test("dashboard renders trip cards and sends trip selection changes", async () => {
   const env = await dashboard();
   assert.equal(env.elements.get("#tripsList").children.length, 1);
+  assert.equal(env.elements.get("#coverageStatus").textContent, "E-ZPass fully covers the Turo trip dates");
+  assert.match(env.elements.get("#ezpassCompleteness").textContent, /last page 3.*requested 2026-01-01.*observed 2025-12-01/);
   await env.elements.get("#tripsList").listeners.change({ target: {
     checked: true, dataset: { action: "trip", reservationId: "trip" }
   } });

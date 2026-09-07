@@ -6,6 +6,7 @@
   const RUN_TIMEOUT_MS = 300000;
   const PAGE_TIMEOUT_MS = 10000;
   const SETTLE_MS = 350;
+  const EMPTY_SETTLE_MS = 1800;
 
   const isoParts = (value) => {
     if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -33,6 +34,23 @@
 
   function transactionMain() {
     return document.querySelector("main, [role='main']") || document.body;
+  }
+
+  function paginationRoot() {
+    const candidates = controls(transactionMain(), 'nav[aria-label="pagination navigation"], nav[aria-label="Pagination navigation"]')
+      .filter(isVisible);
+    if (candidates.length > 1) throw new Error("E-ZPass pagination controls are ambiguous.");
+    return candidates[0] || null;
+  }
+
+  function activePageNumber() {
+    const root = paginationRoot();
+    if (!root) return null;
+    const candidates = buttons(root).filter((node) => isVisible(node) &&
+      (node.getAttribute?.("aria-current") === "true" || node.getAttribute?.("aria-current") === "page"));
+    if (candidates.length !== 1) return null;
+    const match = String(candidates[0].getAttribute?.("aria-label") || "").match(/^page (\d+)$/i);
+    return match ? Number(match[1]) : null;
   }
 
   function controlHint(node) {
@@ -67,13 +85,12 @@
       const parsed = parseRecord(candidate);
       if (parsed) records.push(parsed);
     });
-    const active = buttons().find((node) => node.getAttribute?.("aria-current") === "page") ||
-      buttons().find((node) => /^page \d+$/i.test(normalizedText(node)));
+    const pageNumber = activePageNumber();
     const noTransactions = /\bno transactions found\b/i.test(document.body?.innerText || document.body?.textContent || "");
-    const signature = JSON.stringify([normalizedText(active), ...raw.map((item) => [
+    const signature = JSON.stringify([pageNumber, ...raw.map((item) => [
       item.transactionId, item.timestamp, item.transactionDate, item.transactionTime, item.amount, item.tagOrPlate
     ])]);
-    return { raw, records, noTransactions, signature };
+    return { raw, records, noTransactions, signature, pageNumber, hasPager: Boolean(paginationRoot()) };
   }
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -88,16 +105,22 @@
     throw new Error(message);
   }
 
-  async function settledPage(readDom, parseRecord, previousSignature = null) {
+  async function settledPage(readDom, parseRecord, previousSignature = null, expectedPageNumber = null) {
     let stableSince = 0, last = null;
     return waitFor(() => {
       const sample = samplePage(readDom, parseRecord);
-      const meaningful = sample.raw.length || sample.noTransactions;
+      const pageAdvanced = expectedPageNumber == null || sample.pageNumber === expectedPageNumber;
+      // The live portal briefly removes the table and renders "No transactions
+      // found" after a pager click. Never accept that placeholder while an
+      // expected page transition is pending.
+      const genuineEmpty = expectedPageNumber == null && sample.noTransactions && !sample.hasPager;
+      const meaningful = pageAdvanced && (sample.raw.length || genuineEmpty);
       if (!meaningful || previousSignature && sample.signature === previousSignature) {
         stableSince = 0; last = sample.signature; return null;
       }
       if (last !== sample.signature) { last = sample.signature; stableSince = Date.now(); return null; }
-      return Date.now() - stableSince >= SETTLE_MS ? sample : null;
+      const requiredSettle = sample.raw.length ? SETTLE_MS : EMPTY_SETTLE_MS;
+      return Date.now() - stableSince >= requiredSettle ? sample : null;
     }, PAGE_TIMEOUT_MS, "E-ZPass results did not finish loading after filtering or pagination.");
   }
 
@@ -133,11 +156,39 @@
   }
 
   function nextControl() {
-    return buttons(transactionMain()).find((node) => /^(?:go to )?next(?: page)?$/i.test(normalizedText(node)));
+    const root = paginationRoot();
+    const matches = root ? buttons(root).filter((node) => isVisible(node) &&
+      /^go to next page$/i.test(String(node.getAttribute?.("aria-label") || normalizedText(node)))) : [];
+    if (matches.length > 1) throw new Error("E-ZPass Next pagination control is ambiguous.");
+    return matches[0] || null;
   }
 
   function previousControl() {
-    return buttons(transactionMain()).find((node) => /^(?:go to )?previous(?: page)?$/i.test(normalizedText(node)));
+    const root = paginationRoot();
+    const matches = root ? buttons(root).filter((node) => isVisible(node) &&
+      /^go to previous page$/i.test(String(node.getAttribute?.("aria-label") || normalizedText(node)))) : [];
+    if (matches.length > 1) throw new Error("E-ZPass Previous pagination control is ambiguous.");
+    return matches[0] || null;
+  }
+
+  async function maximizePageSize(page, readDom, parseRecord) {
+    // A single-page result cannot benefit from changing the page size. Skipping
+    // the control also avoids waiting for a signature change the portal will
+    // never produce when every row already fits on page 1.
+    const currentNext = nextControl();
+    if (currentNext && isDisabled(currentNext)) return page;
+    const combos = controls(transactionMain(), '[role="combobox"][aria-label="View"]')
+      .filter(isVisible);
+    if (combos.length !== 1 || /\b100\b/.test(normalizedText(combos[0]))) return page;
+    combos[0].click();
+    const option = await waitFor(() => {
+      const matches = controls(document, '[role="option"]')
+        .filter((node) => isVisible(node) && /^100$/.test(normalizedText(node)));
+      return matches.length === 1 ? matches[0] : null;
+    }, 2000, "E-ZPass page-size menu did not expose a unique 100-row option.");
+    option.click();
+    assertRoute("page-size selection");
+    return settledPage(readDom, parseRecord, page.signature, 1);
   }
 
   function rawTimestamp(item) {
@@ -160,10 +211,15 @@
       if (Date.now() >= deadline) throw new Error("E-ZPass collection exceeded its five-minute safety deadline.");
       const previous = previousControl();
       if (!previous) throw new Error("E-ZPass Previous pagination control is missing.");
-      if (isDisabled(previous)) return page;
+      if (isDisabled(previous)) {
+        if (page.pageNumber !== 1) throw new Error("E-ZPass disabled Previous before reaching page 1.");
+        return page;
+      }
+      if (!Number.isInteger(page.pageNumber) || page.pageNumber <= 1) throw new Error("E-ZPass current page number is unavailable while rewinding.");
+      const expected = page.pageNumber - 1;
       previous.click();
       assertRoute("pagination rewind");
-      page = await settledPage(readDom, parseRecord, page.signature);
+      page = await settledPage(readDom, parseRecord, page.signature, expected);
       if (signatures.has(page.signature)) throw new Error("E-ZPass repeated a result page while rewinding.");
       signatures.add(page.signature);
     }
@@ -182,6 +238,7 @@
     let observedStart = null, observedEnd = null, previousOldest = null;
     let page = await settledPage(readDom, parseRecord);
     if (!page.noTransactions) page = await rewindToFirstPage(page, readDom, parseRecord, deadline);
+    if (!page.noTransactions) page = await maximizePageSize(page, readDom, parseRecord);
     const signatures = new Set();
     for (;;) {
       if (Date.now() >= deadline) throw new Error("E-ZPass collection exceeded its five-minute safety deadline.");
@@ -217,23 +274,25 @@
       const next = nextControl();
       if (!next) throw new Error("E-ZPass Next pagination control is missing from a nonempty result page.");
       if (isDisabled(next)) { terminalReason = "next_disabled"; break; }
+      if (!Number.isInteger(page.pageNumber)) throw new Error("E-ZPass current page number is unavailable before advancing.");
+      const expected = page.pageNumber + 1;
       next.click();
       assertRoute("pagination");
-      page = await settledPage(readDom, parseRecord, page.signature);
+      page = await settledPage(readDom, parseRecord, page.signature, expected);
     }
 
     return {
       records: [...records.values()], complete: true, pageCount, rawCount,
       completeForRange: true, chunkCount: 1, range, requestedRange: range,
       observedRange: observedStart && observedEnd ? { startDate: observedStart, endDate: observedEnd } : null,
-      ordering, terminalReason
+      ordering, terminalReason, lastPage: page.pageNumber || pageCount
     };
   }
 
   globalThis.EzpassCollection = Object.freeze({
     validateRange, collect,
     testing: Object.freeze({ hasActivePortalFilters, hasDescendingTransactionSort, localTimestampKey, pageChronology,
-      nextControl, previousControl, rewindToFirstPage, assertRoute }),
+      paginationRoot, activePageNumber, nextControl, previousControl, maximizePageSize, rewindToFirstPage, assertRoute }),
     constants: Object.freeze({ MAX_TOTAL_PAGES })
   });
 })();

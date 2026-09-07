@@ -53,13 +53,13 @@ Network records take precedence over DOM records. Stale partial network capture 
 
 ## E-ZPass filters and manual tags
 
-Version 0.4.6 does not use the E-ZPass date inputs or Search control. It rewinds the existing unfiltered transaction list to page 1 and reads pages until it passes the oldest relevant Turo trip under verified descending order, or until Next is disabled. Clear date, tag, and plate filters before syncing. Exit times with fractional seconds are supported and negative toll-posting debits become positive charge amounts. Credits, payments, replenishments, deposits, refunds, balance adjustments, posting-only rows, and rows without a complete toll time are ignored.
+Version 0.4.7 does not use the E-ZPass date inputs or Search control. It rewinds the existing unfiltered list, selects View 100 when available, and follows the scoped accessible pager until it passes the oldest relevant trip under proven ordering or Next is disabled. The portal can briefly show “No transactions found” between pages; the collector waits for the requested current-page number and stable rows instead of treating that placeholder as final. Clear date, tag, and plate filters before syncing. Exit times with fractional seconds are supported and verified toll debits become positive charge amounts; credits and other non-toll activity are ignored.
 
 If collection reports an active portal filter, clear the visible E-ZPass date/tag/plate fields and reload the transactions page. If pagination stalls, do not manually change pages during sync; the extension preserves the previous complete snapshot. A stale injected script is detected explicitly and requires reloading the E-ZPass tab.
 
 ### Trips are visible but disabled
 
-E-ZPass is complete for the requested range only after disabled Next or a chronology-proven older page. Turo history pagination and toll-invoice status remain unverified. Confirmed toll matches still appear beneath trips; those independent blockers prevent selection, not display.
+E-ZPass is complete for the requested range only after disabled Next or a chronology-proven older page. The dashboard distinguishes full coverage, a complete range with no in-range tolls, and a run that stopped before reaching the trip dates. Turo status is verified separately. “Existing toll invoice” means a Tolls item was found in the reservation's invoice detail. “Standard window expired” means the trip ended more than 90 days ago. “Invoice view unverified” means the expected hub/detail/option layout, route, or navigation could not be proven; reload Turo and retry rather than overriding it.
 
 The number after “Turo internal vehicle ID” is Turo's internal car reference, not an E-ZPass tag. Use the discovered vehicle card to confirm its plate and add its complete tag values. Identifier formatting is normalized safely, but leading zeros are not interchangeable.
 

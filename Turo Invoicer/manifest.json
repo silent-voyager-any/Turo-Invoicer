@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Turo Toll Reconciler",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "Locally matches E-ZPass NY toll activity to Turo host trip schedules.",
   "minimum_chrome_version": "111",
   "permissions": [
@@ -40,7 +40,8 @@
       "js": [
         "content_common.js",
         "turo_details.js",
-        "content_turo.js"
+        "content_turo.js",
+        "turo_invoice_status.js"
       ],
       "run_at": "document_start"
     },

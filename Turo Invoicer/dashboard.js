@@ -32,6 +32,10 @@ const reasonLabel = (reason) => ({
   status_unknown: "Turo toll-invoice status is unverified",
   already_charged: "Turo already shows a toll invoice",
   ineligible: "Trip is not eligible",
+  existing_toll_invoice: "An existing Turo invoice already contains tolls",
+  standard_window_expired: "Standard 90-day invoice window expired; contact Turo support",
+  invoice_view_unverified: "Turo invoice pages could not be verified",
+  toll_request_available: "Turo toll request is available",
   no_matching_tolls: "No uniquely vehicle-confirmed tolls",
   no_tolls_selected: "No tolls selected",
   invalid_timestamp: "Invalid or ambiguous toll timestamp",
@@ -100,17 +104,24 @@ function vehicleCard(vehicle, assignments) {
 }
 function collectionLabel(source, run) {
   const name = source === "turo" ? "Turo" : "E-ZPass";
-  const range = source === "ezpass" ? run?.observedRange : run?.range || run?.requestedRange;
-  const coverage = range?.startDate && range?.endDate ? ` · ${range.startDate}–${range.endDate}` : "";
-  return run?.complete ? `${name} complete · ${run.pageCount || 0} pages · ${run.recordCount || 0} records${coverage}`
-    : `${name} incomplete · ${run?.recordCount || 0} loaded${coverage}`;
+  const requested = run?.requestedRange || run?.range;
+  const observed = run?.observedRange;
+  const requestedText = requested?.startDate && requested?.endDate ? ` · requested ${requested.startDate}–${requested.endDate}` : "";
+  const observedText = observed?.startDate && observed?.endDate ? ` · observed ${observed.startDate}–${observed.endDate}` : "";
+  const lastPage = source === "ezpass" && run?.lastPage ? ` · last page ${run.lastPage}` : "";
+  const ranges = source === "ezpass" ? requestedText + observedText : requestedText;
+  return run?.complete ? `${name} complete · ${run.pageCount || 0} pages · ${run.recordCount || 0} records${lastPage}${ranges}`
+    : `${name} incomplete · ${run?.recordCount || 0} loaded${lastPage}${ranges}`;
 }
 function coverageLabel(runs = {}) {
-  const turo = runs.turo?.range, ezpass = runs.ezpass?.observedRange;
-  if (!turo?.startDate || !turo?.endDate || !ezpass?.startDate || !ezpass?.endDate) return { text: "Coverage unavailable", warning: true };
-  const overlap = turo.startDate <= ezpass.endDate && ezpass.startDate <= turo.endDate;
-  return overlap ? { text: "Turo and E-ZPass coverage overlaps", warning: false }
-    : { text: "Warning: Turo and E-ZPass date ranges do not overlap", warning: true };
+  const ezpass = runs.ezpass;
+  if (!ezpass?.requestedRange?.startDate || !ezpass?.requestedRange?.endDate) return { text: "Coverage unavailable", warning: true };
+  if (ezpass.complete !== true || ezpass.completeForRange !== true) {
+    return { text: "E-ZPass collection stopped before reaching all Turo trip dates", warning: true };
+  }
+  return Number(ezpass.recordCount) > 0
+    ? { text: "E-ZPass fully covers the Turo trip dates", warning: false }
+    : { text: "Collection complete; no E-ZPass tolls occurred during these trip dates", warning: false };
 }
 function checkbox(action, reservationId, checked, disabled, tollId = null) {
   const input = document.createElement("input"); input.type = "checkbox"; input.checked = checked; input.disabled = disabled;
@@ -134,7 +145,11 @@ function tripCard(draft, state) {
   }
   if (!draft.tolls?.length) tolls.append(element("p", "muted", "No uniquely matched tolls found."));
   card.append(heading, element("p", "internal-id", `Turo internal vehicle ID: ${draft.vehicleId} — not an E-ZPass tag`), dates, tolls, element("p", "", `${draft.selectedTollIds.length} selected · ${moneyCents(draft.totalCents)}`));
-  if (draft.blockingReasons?.length) card.append(element("p", "muted", draft.blockingReasons.map(reasonLabel).join(" · ")));
+  if (draft.blockingReasons?.length) {
+    const reasons = draft.blockingReasons.map((reason) =>
+      reason === draft.eligibility && draft.eligibilityReason ? reasonLabel(draft.eligibilityReason) : reasonLabel(reason));
+    card.append(element("p", "muted", reasons.join(" · ")));
+  }
   return card;
 }
 function reviewCard(title, detail, actions = []) {
@@ -174,7 +189,9 @@ function render(state, { restore = false } = {}) {
 
   const tripBlockers = drafts.filter((item) => !item.selectable).map((draft) => {
     const vehicle = (state.fleet?.vehicles || []).find((item) => String(item.vehicleId) === String(draft.vehicleId));
-    return reviewCard(`Trip ${draft.reservationId} · ${vehicle?.label || "Turo vehicle"}`, draft.blockingReasons.map(reasonLabel).join(" · "));
+    const reasons = draft.blockingReasons.map((reason) =>
+      reason === draft.eligibility && draft.eligibilityReason ? reasonLabel(draft.eligibilityReason) : reasonLabel(reason));
+    return reviewCard(`Trip ${draft.reservationId} · ${vehicle?.label || "Turo vehicle"}`, reasons.join(" · "));
   });
   fill(el.tripBlockerList, tripBlockers, "No trip or source blockers.");
   const tollReview = new Map();
