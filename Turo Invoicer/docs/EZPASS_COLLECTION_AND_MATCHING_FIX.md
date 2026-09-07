@@ -1,12 +1,12 @@
 # E-ZPass Complete Collection and Matching Fix
 
-Target release: **0.4.5**
+Target release: **0.4.6**
 
 ## Summary
 
 Live inspection showed that the E-ZPass transaction view can contain dozens of pages. Version 0.4.1 captures only the currently rendered page, so recent tolls can be compared with older Turo trips while the relevant E-ZPass pages are never loaded. Identifier mapping can therefore be correct while every toll still reports that no trip is in range.
 
-Version 0.4.5 collects Turo first, derives the required Transaction Date range from completed trips, enters the six digits of each date through the signed-in portal's masked inputs, and walks every result page. Collection is complete only after the portal exposes a disabled Next control (or explicitly reports an empty range). A collector revision handshake prevents a stale injected content script from being mistaken for the current build.
+Version 0.4.6 collects Turo first, derives the oldest relevant completed-trip date, and reads the existing E-ZPass result pages without touching date filters. Transaction-row timestamps determine local inclusion. Collection ends at disabled Next or after a fully older page when explicit descending-sort metadata and observed chronology both prove that later pages cannot contain relevant tolls.
 
 ## Collection contract
 
@@ -29,17 +29,17 @@ The content script returns normalized records plus proof metadata:
   complete: true,
   pageCount: 12,
   rawCount: 117,
-  chunkCount: 3,
-  range: { startDate, endDate },
-  terminalReason: "next_disabled"
+  completeForRange: true,
+  requestedRange: { startDate, endDate },
+  observedRange: { startDate, endDate },
+  ordering: "descending",
+  terminalReason: "older_than_required_range"
 }
 ```
 
-Large ranges are divided into inclusive 14-day chunks. Each chunk starts at page 1, rows are collected only after the table settles, and `Lane Txn ID` is the preferred deduplication key. Repeated pages, a missing/nonadvancing pager, route changes, timeouts, or safety-cap exhaustion fail the complete run. A failure never merges partial records into or replaces the previous snapshot.
+The collector first rewinds to page 1, then reads settled pages sequentially. `Lane Txn ID` is the preferred deduplication key. Repeated pages, a missing/nonadvancing pager, active portal filters, route changes, timeouts, or safety-cap exhaustion fail the complete run. A failure never merges partial records into or replaces the previous snapshot.
 
-The collector drives only the visible Transaction Date, Start Date, End Date, Search, and pagination controls. It does not read or retain passwords, cookies, request headers, account data, or raw responses.
-
-The portal also exposes unrelated header Search buttons. The transaction Search lookup therefore starts at the shared ancestor of the two visible date inputs and walks through the transaction main region without a fixed nesting-depth limit. It never crosses into the header. Because the portal can render field labels in sibling component trees, the lookup does not require label text on that shared ancestor. It requires exactly one visible, enabled Search button (including an input-based submit control) in the candidate region; missing or ambiguous controls fail before any navigation.
+The collector drives only Previous and Next pagination controls. It checks whether filter fields are nonempty but never retains their values. It does not read or retain passwords, cookies, request headers, account data, or raw responses.
 
 ## Matching and review behavior
 
@@ -57,7 +57,7 @@ The dashboard displays both collection ranges and warns when they do not overlap
 
 ## Verification
 
-- Cover one-page, multi-page, empty, chunked, repeated-page, stalled-navigation, missing-control, route-change, timeout, duplicate-ID, and safety-cap cases.
+- Cover one-page, multi-page, empty, rewind, early-stop, repeated-page, stalled-navigation, missing-control, route-change, timeout, duplicate-ID, and safety-cap cases.
 - Verify page 1 has disabled Previous and the final page has disabled Next.
 - Verify E-ZPass credits are excluded and toll debits normalize to positive charge magnitudes.
 - Verify unmapped, conflicting, personal/unassigned, overlapping, and unique matches remain distinct.

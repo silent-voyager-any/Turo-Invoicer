@@ -12,7 +12,7 @@ let turoUrl = "https://turo.com/us/en/trips/history";
 let ezpassUrl = "https://www.e-zpassny.com/ezpass/dashboard/transactions";
 const portalResponses = {
   1: { ok: true, source: "turo", pagePath: "/us/en/trips/history", records: [{ id: "trip1", vehicleId: "car1", start: "2026-07-01 09:00", end: "2026-07-01 18:00", vehicleLabel: "Example car", vehiclePlate: "NY:ABC-123", guestName: "Synthetic private field" }] },
-  2: { ok: true, source: "ezpass", collectorRevision: "0.4.5-masked-digit-entry-1", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, accountNumber: "Synthetic private field" }] }
+  2: { ok: true, source: "ezpass", collectorRevision: "0.4.6-history-pagination-1", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, accountNumber: "Synthetic private field" }] }
 };
 globalThis.chrome = {
   runtime: { id: "test-id", getURL: (file) => "chrome-extension://test-id/" + file,
@@ -71,6 +71,21 @@ test("worker collects both sources atomically and strips extra fields", async ()
   assert.deepEqual(sentMessages.find(({ id, message }) => id === 2 && message.type === "COLLECT_NOW").message.range,
     { startDate: "2026-07-01", endDate: "2026-07-01" });
   assert.deepEqual(result.state.collectionRuns.ezpass.requestedRange, { startDate: "2026-07-01", endDate: "2026-07-01" });
+});
+test("verified uncharged trips define the E-ZPass coverage boundary when available", async () => {
+  const prior = portalResponses[1];
+  sentMessages.length = 0;
+  portalResponses[1] = { ...prior, records: [
+    { ...prior.records[0], id: "unknown-old", start: "2026-06-01 09:00", end: "2026-06-01 18:00" },
+    { ...prior.records[0], id: "verified", start: "2026-07-15 09:00", end: "2026-07-16 18:00", invoiceStatus: "eligible_uncharged" }
+  ] };
+  try {
+    const result = await call({ type: "RUN_SYNC" });
+    assert.equal(result.synced, true);
+    assert.deepEqual(sentMessages.find(({ id, message }) => id === 2 && message.type === "COLLECT_NOW").message.range,
+      { startDate: "2026-07-15", endDate: "2026-07-16" });
+    assert.doesNotMatch(result.collection.turo.warning || "", /status is unverified/);
+  } finally { portalResponses[1] = prior; }
 });
 test("failed or multiple-tab collection preserves the prior snapshot", async () => {
   const before = JSON.stringify(stored);

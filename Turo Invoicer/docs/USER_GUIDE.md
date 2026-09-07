@@ -21,7 +21,7 @@ Keep exactly one matching tab per source open:
 - Turo: `https://turo.com/us/en/trips/history`.
 - E-ZPass NY: `https://www.e-zpassny.com/ezpass/dashboard/transactions`.
 
-Do not leave duplicate matching history/transactions tabs open. Other Turo pages are ignored. Select the intended date range and load the necessary pages within each portal. The extension does not navigate, scroll, paginate, solve challenges, or sign in for you.
+Do not leave duplicate matching history/transactions tabs open. Other Turo pages are ignored. Leave the E-ZPass transaction list unfiltered; version 0.4.6 rewinds and paginates it automatically. The extension does not solve challenges or sign in for you.
 
 Use toll passage/transaction time, not posting date. Check which vehicles and reservations are actually represented. Clear data and reload before changing accounts or beginning a different date-range capture workflow: tab-memory network records can accumulate during navigation.
 
@@ -29,7 +29,7 @@ Use toll passage/transaction time, not posting date. Check which vehicles and re
 
 Open the extension, choose **Open fleet dashboard**, and click **Find uncharged trips**. The dashboard is a persistent extension tab with Vehicles, Trips, Needs review, and Batch pages, so it remains open while you switch to Turo or E-ZPass.
 
-Turo waits for records containing a vehicle ID and both trip times, up to 20 seconds. A brief settling window groups nearby render updates. An incoming supported network response can also complete collection. The worker then derives the required E-ZPass Transaction Date range and the signed-in E-ZPass tab automatically filters and paginates that range. Leave the transaction tab open and do not navigate it during collection.
+Turo waits for records containing a vehicle ID and both trip times, up to 20 seconds. A brief settling window groups nearby render updates. An incoming supported network response can also complete collection. The worker derives the oldest relevant completed-trip date, rewinds the signed-in E-ZPass transaction list to page 1, and paginates backward in time without opening its date filter. Leave the transaction tab open and do not navigate it during collection.
 
 During sync, history cards with numeric reservation links can trigger read-only requests to Turo's same-origin reservation-detail JSON endpoint. Your history tab stays in place. Up to 50 discovered reservations are supported, with three requests at once and a six-second limit per read, inside the total 20-second collection deadline. Every discovered reservation must resolve; failed or incomplete reads do not replace prior results. Keep history open and avoid changing its range during sync. If the range is too large, reload and load fewer cards before retrying.
 
@@ -73,7 +73,7 @@ This action does not delete portal records or browser cookies. A later explicit 
 
 ## History-only policy and upgrade
 
-Version 0.4.5 groups uniquely vehicle-confirmed tolls beneath completed-trip drafts and shows every unresolved toll once under **Needs review**. Mapped tolls outside completed trips appear as **Personal/unassigned**. E-ZPass automatically enters digit-only masked dates and displays complete range and page diagnostics; Turo pagination and invoice-status blockers remain separate and can still prevent batching. Reload the extension and both tabs after upgrading.
+Version 0.4.6 groups uniquely vehicle-confirmed tolls beneath completed-trip drafts and shows every unresolved toll once under **Needs review**. Mapped tolls outside completed trips appear as **Personal/unassigned**. E-ZPass displays requested and observed coverage plus page diagnostics; Turo pagination and invoice-status blockers remain separate and can still prevent batching. Reload the extension and both tabs after upgrading.
 
 ## Before relying on a suggestion
 

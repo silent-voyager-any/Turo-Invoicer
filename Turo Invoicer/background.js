@@ -6,7 +6,7 @@ const PATTERNS = { turo: ["https://turo.com/*"], ezpass: ["https://www.e-zpassny
 const MAX_RECORDS = 5000;
 const HISTORY_PATH = "/us/en/trips/history";
 const TRANSACTIONS_PATH = "/ezpass/dashboard/transactions";
-const EZPASS_COLLECTOR_REVISION = "0.4.5-masked-digit-entry-1";
+const EZPASS_COLLECTOR_REVISION = "0.4.6-history-pagination-1";
 const TRUSTED_PAGES = new Set(["popup.html", "dashboard.html"]);
 const isTransactionsUrl = (url) => {
   try {
@@ -181,7 +181,7 @@ async function collect(source, request = {}) {
     // Turo detail reads share its 20s content deadline; allow 5s for the reply.
       const response = await tabRequest(tabs[0].id, {
         type: "COLLECT_NOW", ...(source === "ezpass" ? { range: request.range } : {})
-      }, source === "ezpass" ? 125000 : 25000);
+      }, source === "ezpass" ? 305000 : 25000);
       if (source === "ezpass" && response?.collectorRevision !== EZPASS_COLLECTOR_REVISION) {
         throw new Error("The E-ZPass tab is running an older extension script. Reload that transactions tab, then sync again.");
       }
@@ -193,7 +193,7 @@ async function collect(source, request = {}) {
       throw new Error("Portal left the supported data page during sync. Return and retry.");
     }
     let records = sanitizeRecords(source, response.records);
-    const verifiedEmpty = source === "ezpass" && response.complete === true && response.terminalReason === "empty_range";
+    const verifiedEmpty = source === "ezpass" && response.complete === true && response.completeForRange === true;
     if (!records.length && !verifiedEmpty) throw new Error("No supported records captured. Open the data page and reload it.");
     let warning = response.warning || null;
     if (source === "turo") {
@@ -210,7 +210,10 @@ async function collect(source, request = {}) {
       rawCount: Number.isInteger(response.rawCount) && response.rawCount >= records.length ? response.rawCount : records.length,
       range: source === "ezpass" ? request.range || null : null,
       chunkCount: Number.isInteger(response.chunkCount) && response.chunkCount > 0 ? response.chunkCount : 1,
-      terminalReason: typeof response.terminalReason === "string" ? response.terminalReason.slice(0, 100) : null
+      terminalReason: typeof response.terminalReason === "string" ? response.terminalReason.slice(0, 100) : null,
+      completeForRange: response.completeForRange === true,
+      observedRange: response.observedRange || null,
+      ordering: ["descending", "unverified"].includes(response.ordering) ? response.ordering : "unverified"
     };
   } catch (error) {
     return { source, ok: false, error: error.message || "Reload the portal tab after installation." };
@@ -218,16 +221,22 @@ async function collect(source, request = {}) {
 }
 
 async function runSync() {
-  // Turo defines the minimum E-ZPass range. Sequential collection prevents a
-  // stale/default portal range from being compared with the newly loaded trips.
+  // Turo defines the local E-ZPass boundary. The portal list remains unfiltered;
+  // its own transaction timestamps determine which normalized tolls are kept.
   const turo = await collect("turo");
   if (!turo.ok) return { state: await getState(), collection: { turo, ezpass: { ok: false, error: "E-ZPass was not started because Turo collection failed." } }, synced: false };
   const currentState = await getState();
-  const range = tripCollectionRange(turo.records, {
+  const verifiedUncharged = turo.records.filter((trip) => trip.invoiceStatus === "eligible_uncharged");
+  const coverageTrips = verifiedUncharged.length ? verifiedUncharged : turo.records.filter((trip) =>
+    !["already_charged", "ineligible"].includes(trip.invoiceStatus));
+  const range = tripCollectionRange(coverageTrips, {
     timeZone: currentState.settings.timeZone, graceMinutes: currentState.settings.graceMinutes
   });
   if (!range) return { state: currentState, collection: { turo, ezpass: { ok: false, error: "No completed-trip coverage range is available." } }, synced: false };
   turo.range = range;
+  if (!verifiedUncharged.length) {
+    turo.warning = [turo.warning, "Turo toll-invoice status is unverified; E-ZPass coverage uses all completed trips."].filter(Boolean).join(" ");
+  }
   const ezpass = await collect("ezpass", { range });
   // Commit both sources together. A failed/empty extraction leaves the last
   // complete snapshot intact and visibly reports that it was NOT refreshed.
@@ -248,7 +257,10 @@ async function runSync() {
       range: result.range || null,
       requestedRange: result.source === "ezpass" ? range : result.range || null,
       chunkCount: result.chunkCount || 1,
-      terminalReason: result.terminalReason || null
+      terminalReason: result.terminalReason || null,
+      completeForRange: result.source === "ezpass" ? result.completeForRange === true : result.complete === true,
+      observedRange: result.observedRange || null,
+      ordering: result.ordering || null
     };
   }
   state.tripEligibility = Object.fromEntries(state.sources.turo.records.map((trip) => [String(trip.id), {

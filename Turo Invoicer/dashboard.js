@@ -100,13 +100,13 @@ function vehicleCard(vehicle, assignments) {
 }
 function collectionLabel(source, run) {
   const name = source === "turo" ? "Turo" : "E-ZPass";
-  const range = run?.range || run?.requestedRange;
+  const range = source === "ezpass" ? run?.observedRange : run?.range || run?.requestedRange;
   const coverage = range?.startDate && range?.endDate ? ` · ${range.startDate}–${range.endDate}` : "";
   return run?.complete ? `${name} complete · ${run.pageCount || 0} pages · ${run.recordCount || 0} records${coverage}`
     : `${name} incomplete · ${run?.recordCount || 0} loaded${coverage}`;
 }
 function coverageLabel(runs = {}) {
-  const turo = runs.turo?.range, ezpass = runs.ezpass?.range || runs.ezpass?.requestedRange;
+  const turo = runs.turo?.range, ezpass = runs.ezpass?.observedRange;
   if (!turo?.startDate || !turo?.endDate || !ezpass?.startDate || !ezpass?.endDate) return { text: "Coverage unavailable", warning: true };
   const overlap = turo.startDate <= ezpass.endDate && ezpass.startDate <= turo.endDate;
   return overlap ? { text: "Turo and E-ZPass coverage overlaps", warning: false }

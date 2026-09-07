@@ -1,6 +1,6 @@
 # Project documentation
 
-This reference describes version 0.4.5, including vehicle cards, canonical tag/plate matching, the trip-centric dashboard, schema-4 drafts and selections, authenticated same-origin Turo detail reads, completed-trip filtering, digit-only masked E-ZPass date entry, complete range-aware pagination, and stale collector detection. Last reviewed: September 6, 2026.
+This reference describes version 0.4.6, including vehicle cards, canonical tag/plate matching, the trip-centric dashboard, schema-4 drafts and selections, authenticated same-origin Turo detail reads, completed-trip filtering, direct E-ZPass history pagination, and stale collector detection. Last reviewed: September 6, 2026.
 
 ## Reading paths
 
@@ -30,7 +30,7 @@ Paths below are relative to the extension directory.
 
 ## Implementation versus roadmap
 
-Implemented: passive capture, explicit-sync JSON reads for history-linked reservations, completed-trip filtering, range-derived E-ZPass filtering and pagination, trip-centric drafts, nested uniquely confirmed tolls, persistent toll/trip selection, exact cent totals, four dashboard pages, autosaved fleet drafts, dated tag/plate assignments, safe blockers, bounded SPA waiting, and local clearing.
+Implemented: passive capture, explicit-sync JSON reads for history-linked reservations, completed-trip filtering, range-aware E-ZPass history pagination without date-filter interaction, trip-centric drafts, nested uniquely confirmed tolls, persistent toll/trip selection, exact cent totals, four dashboard pages, autosaved fleet drafts, dated tag/plate assignments, safe blockers, bounded SPA waiting, and local clearing.
 
 Not implemented: complete Turo history pagination, screenshot evidence storage, invoice generation/submission, account identity verification, backend services, licensing/billing, or a packaged Chrome Web Store release. These remain gated roadmap work.
 

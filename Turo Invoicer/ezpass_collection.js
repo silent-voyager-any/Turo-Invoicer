@@ -2,10 +2,8 @@
   "use strict";
 
   const TRANSACTIONS_PATH = "/ezpass/dashboard/transactions";
-  const CHUNK_DAYS = 14;
   const MAX_TOTAL_PAGES = 500;
-  const MAX_PAGES_PER_CHUNK = 100;
-  const RUN_TIMEOUT_MS = 120000;
+  const RUN_TIMEOUT_MS = 300000;
   const PAGE_TIMEOUT_MS = 10000;
   const SETTLE_MS = 350;
 
@@ -23,29 +21,6 @@
     return { startDate: range.startDate, endDate: range.endDate };
   }
 
-  const isoDate = (date) => date.toISOString().slice(0, 10);
-  function chunkDateRange(range, days = CHUNK_DAYS) {
-    range = validateRange(range);
-    if (!Number.isInteger(days) || days < 1 || days > 31) throw new Error("Invalid E-ZPass date chunk size.");
-    const chunks = [];
-    let cursor = isoParts(range.startDate).date;
-    const end = isoParts(range.endDate).date;
-    while (cursor <= end) {
-      const chunkEnd = new Date(Math.min(end.getTime(), cursor.getTime() + (days - 1) * 86400000));
-      chunks.push({ startDate: isoDate(cursor), endDate: isoDate(chunkEnd) });
-      cursor = new Date(chunkEnd.getTime() + 86400000);
-    }
-    return chunks;
-  }
-
-  const portalDate = (value) => {
-    const { year, month, day } = isoParts(value);
-    return `${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}/${String(year).slice(-2)}`;
-  };
-  const compactPortalDate = (value) => {
-    const { year, month, day } = isoParts(value);
-    return `${month}/${day}/${String(year).slice(-2)}`;
-  };
   const normalizedText = (node) => String(node?.textContent || node?.getAttribute?.("aria-label") ||
     node?.getAttribute?.("title") || node?.getAttribute?.("value") || "")
     .replace(/\s+/g, " ").trim();
@@ -60,160 +35,23 @@
     return document.querySelector("main, [role='main']") || document.body;
   }
 
-  function uniqueVisibleButton(root, pattern, label) {
-    const matches = buttons(root).filter((node) => isVisible(node) && pattern.test(normalizedText(node)));
-    if (matches.length !== 1) throw new Error(`Expected exactly one visible E-ZPass ${label} control; found ${matches.length}.`);
-    return matches[0];
+  function controlHint(node) {
+    const labels = [...(node?.labels || [])].map(normalizedText).join(" ");
+    return [node?.getAttribute?.("aria-label"), node?.getAttribute?.("placeholder"),
+      node?.getAttribute?.("name"), node?.getAttribute?.("id"), labels].filter(Boolean).join(" ");
   }
 
-  function mainButton(pattern, label) {
-    return uniqueVisibleButton(transactionMain(), pattern, label);
-  }
-
-  function dateInputs(visibleOnly = false) {
-    const inputs = controls(transactionMain(), "input").filter((node) => {
-      const hint = `${node.getAttribute?.("aria-label") || ""} ${node.getAttribute?.("placeholder") || ""}`;
-      return /date|mm\/dd/i.test(hint);
+  function hasActivePortalFilters() {
+    return controls(transactionMain(), "input").some((node) => {
+      if (!isVisible(node) || !/(?:date|mm\/dd|tag|plate)/i.test(controlHint(node))) return false;
+      return String(node.value || "").trim().length > 0;
     });
-    return visibleOnly ? inputs.filter(isVisible) : inputs;
   }
 
-  function dateInputHint(input) {
-    const labels = [...(input?.labels || [])].map(normalizedText).join(" ");
-    return [input?.getAttribute?.("aria-label"), input?.getAttribute?.("name"),
-      input?.getAttribute?.("id"), labels].filter(Boolean).join(" ");
-  }
-
-  function orderDateInputs(inputs) {
-    if (inputs.length !== 2) return inputs;
-    const start = inputs.filter((input) => /(?:start.*date|date.*start)/i.test(dateInputHint(input)));
-    const end = inputs.filter((input) => /(?:end.*date|date.*end)/i.test(dateInputHint(input)));
-    return start.length === 1 && end.length === 1 && start[0] !== end[0] ? [start[0], end[0]] : inputs;
-  }
-
-  function requireVisibleDateInputs() {
-    const inputs = dateInputs(true);
-    if (inputs.length !== 2) throw new Error(`Expected exactly two visible E-ZPass date inputs; found ${inputs.length}.`);
-    return orderDateInputs(inputs);
-  }
-
-  function commonAncestor(left, right) {
-    const rightAncestors = new Set();
-    for (let node = right; node; node = node.parentElement) rightAncestors.add(node);
-    for (let node = left; node; node = node.parentElement) if (rightAncestors.has(node)) return node;
-    return null;
-  }
-
-  function filterSearchButton(inputs) {
-    const main = transactionMain();
-    let container = commonAncestor(inputs?.[0], inputs?.[1]);
-    // E-ZPass renders field labels in sibling component trees, so their text is
-    // not guaranteed to be present on the inputs' shared ancestor. Starting at
-    // that ancestor still proves proximity; walking only through `main` keeps
-    // the portal header's unrelated Search controls out of scope.
-    while (container) {
-      const searches = buttons(container).filter((node) => isVisible(node) && /^search$/i.test(normalizedText(node)));
-      if (searches.length > 1) throw new Error("E-ZPass transaction filter contains multiple visible Search controls.");
-      if (searches.length === 1) {
-        if (isDisabled(searches[0])) throw new Error("E-ZPass transaction-filter Search control is disabled.");
-        return searches[0];
-      }
-      if (container === main) break;
-      container = container.parentElement;
-    }
-    throw new Error("E-ZPass transaction-filter Search control was not found in the date-filter region.");
-  }
-
-  function nativeInputSetter(input) {
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-    if (!setter) throw new Error("E-ZPass date input is not editable.");
-    return setter;
-  }
-
-  function dispatchInputEvent(input, type, init = {}) {
-    let event;
-    try {
-      event = type === "input" || type === "beforeinput"
-        ? new InputEvent(type, { bubbles: true, cancelable: type === "beforeinput", ...init })
-        : type.startsWith("key")
-          ? new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init })
-          : new Event(type, { bubbles: true, ...init });
-    } catch {
-      event = new Event(type, { bubbles: true, cancelable: type === "beforeinput" });
-    }
-    input.dispatchEvent(event);
-  }
-
-  const normalizedDateDigits = (value) => String(value || "").replace(/\D/g, "");
-  const maskedDatePrefix = (digits) => [digits.slice(0, 2), digits.slice(2, 4), digits.slice(4, 6)]
-    .filter(Boolean).join("/");
-
-  async function editDateInput(input, digits) {
-    if (typeof document.execCommand !== "function") return false;
-    input.focus?.();
-    input.select?.();
-    input.setSelectionRange?.(0, String(input.value || "").length);
-    try {
-      document.execCommand("delete", false);
-      for (const digit of digits) {
-        if (!document.execCommand("insertText", false, digit)) return false;
-        await Promise.resolve();
-      }
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function clearDateInput(input, setter) {
-    input.focus?.();
-    input.setSelectionRange?.(0, String(input.value || "").length);
-    dispatchInputEvent(input, "beforeinput", { inputType: "deleteContentBackward", data: null });
-    setter.call(input, "");
-    dispatchInputEvent(input, "input", { inputType: "deleteContentBackward", data: null });
-  }
-
-  async function commitDateInput(input, value) {
-    const setter = nativeInputSetter(input);
-    const digits = normalizedDateDigits(value);
-    const edited = await editDateInput(input, digits);
-    if (!edited || normalizedDateDigits(input.value) !== digits) {
-      clearDateInput(input, setter);
-      let typedDigits = "";
-      for (const digit of digits) {
-        dispatchInputEvent(input, "keydown", { key: digit, code: `Digit${digit}` });
-        dispatchInputEvent(input, "keypress", { key: digit, code: `Digit${digit}` });
-        dispatchInputEvent(input, "beforeinput", { inputType: "insertText", data: digit });
-        typedDigits += digit;
-        // The mask owns slash insertion. The fallback sets the masked prefix
-        // but announces only the digit as newly typed input.
-        setter.call(input, maskedDatePrefix(typedDigits));
-        dispatchInputEvent(input, "input", { inputType: "insertText", data: digit });
-        dispatchInputEvent(input, "keyup", { key: digit, code: `Digit${digit}` });
-        await Promise.resolve();
-      }
-    }
-    dispatchInputEvent(input, "change");
-    input.blur?.();
-    await sleep(0);
-    const accepted = normalizedDateDigits(input.value) === digits && input.checkValidity?.() !== false;
-    if (!accepted) throw new Error(`E-ZPass rejected a requested date. Diagnostics: ${controlDiagnostics([input])}`);
-    return true;
-  }
-
-  function controlDiagnostics(inputs, search = null) {
-    const fields = inputs.map((input) => ({
-      type: String(input?.getAttribute?.("type") || input?.type || "text").slice(0, 20),
-      format: /mm\/dd\/yy/i.test(input?.getAttribute?.("placeholder") || "") ? "MM/DD/YY" : "unknown",
-      accepted: normalizedDateDigits(input?.value).length === 6,
-      digitCount: Math.min(8, normalizedDateDigits(input?.value).length),
-      valid: input?.checkValidity?.() !== false
-    }));
-    const searchState = search ? {
-      disabledProperty: Boolean(search.disabled),
-      ariaDisabled: search.getAttribute?.("aria-disabled") === "true"
-    } : { found: false };
-    return JSON.stringify({ fields, search: searchState });
+  function hasDescendingTransactionSort() {
+    return controls(transactionMain(), "th, [role='columnheader']").some((node) =>
+      /(?:transaction|exit|passage).*date|date.*(?:transaction|exit|passage)/i.test(normalizedText(node)) &&
+      node.getAttribute?.("aria-sort") === "descending");
   }
 
   const currentPath = () => new URL(location.href).pathname.replace(/\/$/, "");
@@ -250,15 +88,12 @@
     throw new Error(message);
   }
 
-  async function settledPage(readDom, parseRecord, previousSignature = null, expectedRange = null) {
+  async function settledPage(readDom, parseRecord, previousSignature = null) {
     let stableSince = 0, last = null;
     return waitFor(() => {
       const sample = samplePage(readDom, parseRecord);
-      const rangeText = buttons().map(normalizedText).find((text) => text.includes("-") && /\d+\/\d+\/\d+/.test(text)) || "";
-      const rangeReady = !expectedRange || (rangeText.includes(compactPortalDate(expectedRange.startDate)) &&
-        rangeText.includes(compactPortalDate(expectedRange.endDate)));
       const meaningful = sample.raw.length || sample.noTransactions;
-      if (!rangeReady || !meaningful || previousSignature && sample.signature === previousSignature) {
+      if (!meaningful || previousSignature && sample.signature === previousSignature) {
         stableSince = 0; last = sample.signature; return null;
       }
       if (last !== sample.signature) { last = sample.signature; stableSince = Date.now(); return null; }
@@ -266,99 +101,139 @@
     }, PAGE_TIMEOUT_MS, "E-ZPass results did not finish loading after filtering or pagination.");
   }
 
-  async function applyRange(range, readDom, parseRecord) {
-    assertRoute("filter setup");
-    const transactionDate = mainButton(/^transaction date$/i, "Transaction Date");
-    transactionDate.click();
-    assertRoute("Transaction Date selection");
-    let inputs = dateInputs(true);
-    if (!inputs.length) {
-      const filter = mainButton(/^filter$/i, "Filter");
-      filter.click();
-      assertRoute("filter-panel opening");
-      inputs = await waitFor(() => {
-        const found = dateInputs(true);
-        if (found.length > 2) throw new Error(`Expected exactly two visible E-ZPass date inputs; found ${found.length}.`);
-        return found.length === 2 ? found : null;
-      }, 3000, "E-ZPass date filter controls were not found.");
-    } else inputs = requireVisibleDateInputs();
-    inputs = orderDateInputs(inputs);
-    await commitDateInput(inputs[0], portalDate(range.startDate));
-    await commitDateInput(inputs[1], portalDate(range.endDate));
-    let search;
-    try {
-      search = await waitFor(() => {
-        try { return filterSearchButton(inputs); }
-        catch (error) {
-          if (/disabled/.test(error.message)) return null;
-          throw error;
-        }
-      }, 5000, "E-ZPass did not enable its Search control for the requested dates.");
-    } catch (error) {
-      let candidate = null;
-      try {
-        candidate = buttons(commonAncestor(inputs[0], inputs[1]) || transactionMain())
-          .find((node) => isVisible(node) && /^search$/i.test(normalizedText(node))) || null;
-      } catch { /* Diagnostics must not mask the collection failure. */ }
-      throw new Error(`${error.message} Diagnostics: ${controlDiagnostics(inputs, candidate)}`);
+  function localTimestampKey(value) {
+    if (typeof value === "number" && Number.isFinite(value)) return new Date(value).toISOString().replace(/\D/g, "").slice(0, 14);
+    const text = String(value || "").trim();
+    let match = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?\s*(AM|PM)?)?/i);
+    if (match) {
+      let [, month, day, year, hour = "0", minute = "0", second = "0", meridiem] = match;
+      year = year.length === 2 ? `20${year}` : year;
+      hour = Number(hour);
+      const minuteNumber = Number(minute), secondNumber = Number(second);
+      if (meridiem) {
+        if (hour < 1 || hour > 12) return null;
+        hour = hour % 12 + (/pm/i.test(meridiem) ? 12 : 0);
+      } else if (hour < 0 || hour > 23) return null;
+      if (minuteNumber > 59 || secondNumber > 59) return null;
+      const parts = [Number(year), Number(month), Number(day), hour, minuteNumber, secondNumber];
+      const check = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], parts[3], parts[4], parts[5]));
+      if (check.getUTCFullYear() !== parts[0] || check.getUTCMonth() + 1 !== parts[1] ||
+          check.getUTCDate() !== parts[2] || check.getUTCHours() !== parts[3]) return null;
+      return parts.map((part, index) => String(part).padStart(index ? 2 : 4, "0")).join("");
     }
-    search.click();
-    assertRoute("transaction-filter search");
-    return settledPage(readDom, parseRecord, null, range);
+    match = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+    if (!match) return null;
+    const [, year, month, day, hour = "00", minute = "00", second = "00"] = match;
+    const parts = [Number(year), Number(month), Number(day), Number(hour), Number(minute), Number(second)];
+    const check = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], parts[3], parts[4], parts[5]));
+    if (check.getUTCFullYear() !== parts[0] || check.getUTCMonth() + 1 !== parts[1] ||
+        check.getUTCDate() !== parts[2] || check.getUTCHours() !== parts[3] ||
+        check.getUTCMinutes() !== parts[4] || check.getUTCSeconds() !== parts[5]) return null;
+    return `${year}${month}${day}${hour}${minute}${second}`;
   }
 
   function nextControl() {
-    return buttons(transactionMain()).find((node) => /(?:go to )?next page/i.test(normalizedText(node)));
+    return buttons(transactionMain()).find((node) => /^(?:go to )?next(?: page)?$/i.test(normalizedText(node)));
+  }
+
+  function previousControl() {
+    return buttons(transactionMain()).find((node) => /^(?:go to )?previous(?: page)?$/i.test(normalizedText(node)));
+  }
+
+  function rawTimestamp(item) {
+    return item?.timestamp || item?.transactionDateTime ||
+      [item?.transactionDate, item?.transactionTime].filter(Boolean).join(" ");
+  }
+
+  function pageChronology(page, previousOldest = null) {
+    const keys = page.raw.map((item) => localTimestampKey(rawTimestamp(item))).filter(Boolean);
+    const complete = keys.length === page.raw.length && keys.length > 0;
+    const descending = complete && keys.every((key, index) => index === 0 || key <= keys[index - 1]);
+    const newest = keys.length ? [...keys].sort().at(-1) : null;
+    const oldest = keys.length ? [...keys].sort()[0] : null;
+    return { keys, complete, descending: descending && (!previousOldest || newest <= previousOldest), newest, oldest };
+  }
+
+  async function rewindToFirstPage(page, readDom, parseRecord, deadline) {
+    const signatures = new Set([page.signature]);
+    for (let count = 0; count < MAX_TOTAL_PAGES; count += 1) {
+      if (Date.now() >= deadline) throw new Error("E-ZPass collection exceeded its five-minute safety deadline.");
+      const previous = previousControl();
+      if (!previous) throw new Error("E-ZPass Previous pagination control is missing.");
+      if (isDisabled(previous)) return page;
+      previous.click();
+      assertRoute("pagination rewind");
+      page = await settledPage(readDom, parseRecord, page.signature);
+      if (signatures.has(page.signature)) throw new Error("E-ZPass repeated a result page while rewinding.");
+      signatures.add(page.signature);
+    }
+    throw new Error("E-ZPass pagination rewind reached its safety cap.");
   }
 
   async function collect({ range, parseRecord, readDom }) {
     range = validateRange(range);
     const deadline = Date.now() + RUN_TIMEOUT_MS;
-    const chunks = chunkDateRange(range);
+    if (hasActivePortalFilters()) {
+      throw new Error("E-ZPass has an active date, tag, or plate filter. Clear the portal filters, reload the transactions page, and sync again.");
+    }
     const records = new Map();
     let rawCount = 0, pageCount = 0, terminalReason = "empty_range";
-
-    for (const chunk of chunks) {
-      if (Date.now() >= deadline) throw new Error("E-ZPass collection exceeded its two-minute safety deadline.");
-      let page = await applyRange(chunk, readDom, parseRecord);
-      const pageSignatures = new Set();
-      for (let chunkPages = 0; ; chunkPages += 1) {
-        if (Date.now() >= deadline) throw new Error("E-ZPass collection exceeded its two-minute safety deadline.");
-        if (chunkPages >= MAX_PAGES_PER_CHUNK || pageCount >= MAX_TOTAL_PAGES) {
-          throw new Error("E-ZPass pagination safety cap reached; narrow the completed-trip range.");
-        }
-        if (pageSignatures.has(page.signature)) throw new Error("E-ZPass repeated a result page instead of advancing.");
-        pageSignatures.add(page.signature);
-        pageCount += 1;
-        rawCount += page.raw.length;
-        for (const record of page.records) {
-          const key = record.id || JSON.stringify(record);
-          const prior = records.get(key);
-          if (prior && JSON.stringify(prior) !== JSON.stringify(record)) throw new Error("E-ZPass returned conflicting duplicate transaction IDs.");
-          records.set(key, record);
-        }
-
-        const next = nextControl();
-        if (page.noTransactions && !page.records.length) { terminalReason = "empty_range"; break; }
-        if (!next) throw new Error("E-ZPass pagination controls are missing from a nonempty result page.");
-        if (isDisabled(next)) { terminalReason = "next_disabled"; break; }
-        const previous = page.signature;
-        next.click();
-        assertRoute("pagination");
-        page = await settledPage(readDom, parseRecord, previous);
+    let ordering = hasDescendingTransactionSort() ? "descending" : "unverified";
+    let observedStart = null, observedEnd = null, previousOldest = null;
+    let page = await settledPage(readDom, parseRecord);
+    if (!page.noTransactions) page = await rewindToFirstPage(page, readDom, parseRecord, deadline);
+    const signatures = new Set();
+    for (;;) {
+      if (Date.now() >= deadline) throw new Error("E-ZPass collection exceeded its five-minute safety deadline.");
+      if (pageCount >= MAX_TOTAL_PAGES) throw new Error("E-ZPass pagination safety cap reached.");
+      if (signatures.has(page.signature)) throw new Error("E-ZPass repeated a result page instead of advancing.");
+      signatures.add(page.signature);
+      pageCount += 1;
+      rawCount += page.raw.length;
+      const chronology = pageChronology(page, previousOldest);
+      if (!chronology.descending) ordering = "unverified";
+      if (chronology.oldest) {
+        const oldestDate = `${chronology.oldest.slice(0, 4)}-${chronology.oldest.slice(4, 6)}-${chronology.oldest.slice(6, 8)}`;
+        const newestDate = `${chronology.newest.slice(0, 4)}-${chronology.newest.slice(4, 6)}-${chronology.newest.slice(6, 8)}`;
+        observedStart = !observedStart || oldestDate < observedStart ? oldestDate : observedStart;
+        observedEnd = !observedEnd || newestDate > observedEnd ? newestDate : observedEnd;
+        previousOldest = chronology.oldest;
       }
+      for (const record of page.records) {
+        const stamp = localTimestampKey(record.timestamp);
+        const date = stamp ? `${stamp.slice(0, 4)}-${stamp.slice(4, 6)}-${stamp.slice(6, 8)}` : null;
+        if (!date || date < range.startDate || date > range.endDate) continue;
+        const key = record.id || JSON.stringify(record);
+        const prior = records.get(key);
+        if (prior && JSON.stringify(prior) !== JSON.stringify(record)) throw new Error("E-ZPass returned conflicting duplicate transaction IDs.");
+        records.set(key, record);
+      }
+
+      if (page.noTransactions && !page.records.length) { terminalReason = "empty_range"; break; }
+      if (ordering === "descending" && chronology.complete && chronology.newest.slice(0, 8) < range.startDate.replace(/-/g, "")) {
+        terminalReason = "older_than_required_range";
+        break;
+      }
+      const next = nextControl();
+      if (!next) throw new Error("E-ZPass Next pagination control is missing from a nonempty result page.");
+      if (isDisabled(next)) { terminalReason = "next_disabled"; break; }
+      next.click();
+      assertRoute("pagination");
+      page = await settledPage(readDom, parseRecord, page.signature);
     }
 
     return {
       records: [...records.values()], complete: true, pageCount, rawCount,
-      chunkCount: chunks.length, range, terminalReason
+      completeForRange: true, chunkCount: 1, range, requestedRange: range,
+      observedRange: observedStart && observedEnd ? { startDate: observedStart, endDate: observedEnd } : null,
+      ordering, terminalReason
     };
   }
 
   globalThis.EzpassCollection = Object.freeze({
-    validateRange, chunkDateRange, portalDate, collect,
-    testing: Object.freeze({ uniqueVisibleButton, requireVisibleDateInputs, orderDateInputs,
-      filterSearchButton, commitDateInput, controlDiagnostics, assertRoute }),
-    constants: Object.freeze({ CHUNK_DAYS, MAX_TOTAL_PAGES, MAX_PAGES_PER_CHUNK })
+    validateRange, collect,
+    testing: Object.freeze({ hasActivePortalFilters, hasDescendingTransactionSort, localTimestampKey, pageChronology,
+      nextControl, previousControl, rewindToFirstPage, assertRoute }),
+    constants: Object.freeze({ MAX_TOTAL_PAGES })
   });
 })();

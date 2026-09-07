@@ -10,7 +10,7 @@ This directory is the runnable Chrome Manifest V3 extension. Select this folder,
 4. Open the fleet dashboard from the popup, then select **Sync portal tabs**. Both collectors can take up to 20 seconds. Only completed Turo trips qualify.
 5. Review suggestions and use the dashboard's dated vehicle-ID/tag/plate form before relying on a result.
 
-Version 0.4.5 collects Turo first, derives the required E-ZPass Transaction Date range from completed trips, enters only date digits through Chromium's focused editing path so the portal mask can add separators, and walks results until the disabled Next control proves completion. It also detects an E-ZPass tab that still has an older injected collector. Turo pagination and invoice status remain fail-closed; evidence and submission are not yet enabled. Reload the extension and both portal tabs after updating.
+Version 0.4.6 collects Turo first, derives the oldest relevant completed-trip date, and then reads the existing E-ZPass transaction history backward through pagination without touching its fragile date filter. Toll dates come directly from transaction rows and are filtered locally. Turo pagination and invoice status remain fail-closed; evidence and submission are not yet enabled. Reload the extension and both portal tabs after updating.
 
 No package installation or build is needed. Development checks, from this directory:
 

@@ -3,203 +3,144 @@ import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
 
-const baseDocument = { querySelectorAll: () => [], querySelector: () => null, body: { innerText: "", querySelectorAll: () => [] } };
-class FakeEvent {
-  constructor(type, init = {}) { this.type = type; Object.assign(this, init); }
-}
-class FakeInputElement {}
-Object.defineProperty(FakeInputElement.prototype, "value", {
-  configurable: true,
-  get() { return this._value || ""; },
-  set(value) { this._value = String(value); }
-});
 const context = vm.createContext({
   Date, URL, location: { href: "https://www.e-zpassny.com/ezpass/dashboard/transactions" },
-  document: baseDocument, Event: FakeEvent, InputEvent: FakeEvent, KeyboardEvent: FakeEvent,
-  HTMLInputElement: FakeInputElement,
+  document: { querySelectorAll: () => [], querySelector: () => null, body: { textContent: "" } },
   setTimeout, clearTimeout
 });
 vm.runInContext(readFileSync("ezpass_collection.js", "utf8"), context);
 const api = context.EzpassCollection;
+const clone = (value) => JSON.parse(JSON.stringify(value));
 
-test("validates and formats the worker's E-ZPass date-range contract", () => {
-  assert.deepEqual(JSON.parse(JSON.stringify(api.validateRange({ startDate: "2026-08-01", endDate: "2026-08-31" }))),
+test("validates the worker's E-ZPass date-range contract", () => {
+  assert.deepEqual(clone(api.validateRange({ startDate: "2026-08-01", endDate: "2026-08-31" })),
     { startDate: "2026-08-01", endDate: "2026-08-31" });
-  assert.equal(api.portalDate("2026-08-01"), "08/01/26");
   assert.throws(() => api.validateRange({ startDate: "2026-08-31", endDate: "2026-08-01" }), /valid/);
   assert.throws(() => api.validateRange({ startDate: "2026-02-30", endDate: "2026-03-01" }), /valid/);
 });
 
-test("splits large ranges into inclusive, nonoverlapping 14-day chunks", () => {
-  assert.deepEqual(JSON.parse(JSON.stringify(api.chunkDateRange({ startDate: "2026-08-01", endDate: "2026-09-02" }))), [
-    { startDate: "2026-08-01", endDate: "2026-08-14" },
-    { startDate: "2026-08-15", endDate: "2026-08-28" },
-    { startDate: "2026-08-29", endDate: "2026-09-02" }
-  ]);
-  assert.deepEqual(JSON.parse(JSON.stringify(api.chunkDateRange({ startDate: "2026-08-01", endDate: "2026-08-01" }))), [
-    { startDate: "2026-08-01", endDate: "2026-08-01" }
-  ]);
+test("normalizes portal timestamps into sortable local keys", () => {
+  assert.equal(api.testing.localTimestampKey("09/05/2026 13:11:16.090"), "20260905131116");
+  assert.equal(api.testing.localTimestampKey("9/5/26 1:11:16 PM"), "20260905131116");
+  assert.equal(api.testing.localTimestampKey("2026-09-05T13:11:16"), "20260905131116");
+  assert.equal(api.testing.localTimestampKey("not a date"), null);
+  assert.equal(api.testing.localTimestampKey("2026-99-99T13:11:16"), null);
+  assert.equal(api.testing.localTimestampKey("09/05/2026 13:11 PM"), null);
 });
 
-function domNode({ tag = "div", text = "", attributes = {}, visible = true, disabled = false, onEvent = null } = {}) {
-  const node = {
-    tag, ownText: text, attributes, visible, disabled, hidden: false, parentElement: null, children: [], clicks: 0,
-    events: [], focused: false,
-    append(...children) { for (const child of children) { child.parentElement = this; this.children.push(child); } },
-    get textContent() { return [this.ownText, ...this.children.map((child) => child.textContent)].filter(Boolean).join(" "); },
-    getAttribute(name) { return this.attributes[name] ?? null; },
-    getClientRects() { return this.visible ? [{}] : []; },
-    get offsetParent() { return this.visible ? {} : null; },
-    click() { this.clicks += 1; },
-    focus() { this.focused = true; },
-    blur() { this.focused = false; },
-    setSelectionRange() {},
-    checkValidity() { return this.attributes.valid !== false; },
-    dispatchEvent(event) { this.events.push(event); onEvent?.(event, this); return true; },
+test("proves descending page chronology and rejects boundary reversals", () => {
+  const first = api.testing.pageChronology({ raw: [
+    { timestamp: "09/05/2026 1:00 PM" }, { timestamp: "09/04/2026 1:00 PM" }
+  ] });
+  assert.equal(first.descending, true);
+  const second = api.testing.pageChronology({ raw: [{ timestamp: "09/06/2026 1:00 PM" }] }, first.oldest);
+  assert.equal(second.descending, false);
+  assert.equal(api.testing.pageChronology({ raw: [{ timestamp: "bad" }] }).complete, false);
+});
+
+function portalFixture({ pages, startPage = 0, activeFilter = false, descendingSort = true,
+  repeatNext = false, omitPrevious = false, omitNext = false }) {
+  let pageIndex = startPage;
+  const clicks = { previous: 0, next: 0, transactionDate: 0, filter: 0, search: 0 };
+  const visible = () => ({ length: 1 });
+  const previous = {
+    textContent: "Go to previous page", hidden: false, get offsetParent() { return {}; }, getClientRects: visible,
+    get disabled() { return pageIndex === 0; }, getAttribute: () => null,
+    click() { clicks.previous += 1; pageIndex = Math.max(0, pageIndex - 1); }
+  };
+  const next = {
+    textContent: "Go to next page", hidden: false, get offsetParent() { return {}; }, getClientRects: visible,
+    get disabled() { return pageIndex === pages.length - 1; }, getAttribute: () => null,
+    click() { clicks.next += 1; if (!repeatNext) pageIndex = Math.min(pages.length - 1, pageIndex + 1); }
+  };
+  const unrelated = ["Transaction Date", "Filter", "Search"].map((text) => ({
+    textContent: text, hidden: false, disabled: false, get offsetParent() { return {}; }, getClientRects: visible,
+    getAttribute: () => null,
+    click() { clicks[text === "Transaction Date" ? "transactionDate" : text.toLowerCase()] += 1; }
+  }));
+  const dateHeader = {
+    textContent: "Transaction Date", getAttribute: (name) => name === "aria-sort" && descendingSort ? "descending" : null
+  };
+  const filterInput = {
+    value: activeFilter ? "synthetic-nonempty" : "", hidden: false, get offsetParent() { return {}; },
+    getClientRects: visible, labels: [],
+    getAttribute: (name) => name === "aria-label" ? "Start Date" : name === "placeholder" ? "MM/DD/YY" : null
+  };
+  const main = {
     querySelectorAll(selector) {
-      const descendants = this.children.flatMap((child) => [child, ...child.querySelectorAll("*")]);
-      if (selector === "*") return descendants;
-      if (selector === "input") return descendants.filter((child) => child.tag === "input");
       if (selector === "button, [role='button'], input[type='submit'], input[type='button']") {
-        return descendants.filter((child) => child.tag === "button" || child.attributes.role === "button" ||
-          child.tag === "input" && ["submit", "button"].includes(child.attributes.type));
+        return [...(omitPrevious ? [] : [previous]), ...(omitNext ? [] : [next]), ...unrelated];
       }
+      if (selector === "input") return [filterInput];
+      if (selector === "th, [role='columnheader']") return [dateHeader];
       return [];
     }
   };
-  if (tag === "input") Object.setPrototypeOf(node, FakeInputElement.prototype);
-  return node;
-}
-
-function filterFixture({ searchCount = 1, searchVisible = true, searchDisabled = false, dateCount = 2, includeLabels = true, nestingDepth = 0 } = {}) {
-  const body = domNode(), header = domNode({ tag: "header" }), main = domNode({ tag: "main" });
-  const headerSearches = [1, 2, 3].map(() => domNode({ tag: "button", text: "Search" }));
-  header.append(...headerSearches);
-  const panel = domNode({ text: includeLabels ? "Start Date End Date Type Tag/Plate #" : "" });
-  const inputs = Array.from({ length: dateCount }, (_, index) => domNode({
-    tag: "input", attributes: { placeholder: "MM/DD/YY", "aria-label": index ? "End Date" : "Start Date" }
-  }));
-  const searches = Array.from({ length: searchCount }, () => domNode({ tag: "button", text: "SEARCH", visible: searchVisible, disabled: searchDisabled }));
-    let inputHost = panel;
-    for (let depth = 0; depth < nestingDepth; depth += 1) {
-      const wrapper = domNode();
-      inputHost.append(wrapper);
-      inputHost = wrapper;
-    }
-    inputHost.append(...inputs);
-    panel.append(...searches); main.append(panel); body.append(header, main);
   context.document = {
-    body,
+    body: { textContent: "" },
     querySelector: (selector) => selector === "main, [role='main']" ? main : null,
-    querySelectorAll: (selector) => body.querySelectorAll(selector)
+    querySelectorAll: (selector) => main.querySelectorAll(selector)
   };
-  return { headerSearches, main, panel, inputs, searches };
+  const readDom = (add) => pages[pageIndex].forEach(add);
+  const parseRecord = (row) => row.amount ? {
+    id: row.id, timestamp: row.timestamp, plaza: row.plaza || "Example", amount: row.amount
+  } : null;
+  return { readDom, parseRecord, clicks, get pageIndex() { return pageIndex; } };
 }
 
-  test("scopes Search to the transaction date panel instead of portal header buttons", () => {
+test("collects existing rows without touching filters and stops after the oldest trip", async () => {
   context.location.href = "https://www.e-zpassny.com/ezpass/dashboard/transactions";
-  const fixture = filterFixture();
-  const search = api.testing.filterSearchButton(api.testing.requireVisibleDateInputs());
-  search.click();
-  api.testing.assertRoute("test filter search");
-  assert.equal(fixture.searches[0].clicks, 1);
-  assert.deepEqual(fixture.headerSearches.map((button) => button.clicks), [0, 0, 0]);
-  });
-
-  test("finds transaction Search when the date controls are deeply nested", () => {
-    const fixture = filterFixture({ nestingDepth: 12 });
-    const search = api.testing.filterSearchButton(api.testing.requireVisibleDateInputs());
-    search.click();
-    assert.equal(fixture.searches[0].clicks, 1);
-    assert.deepEqual(fixture.headerSearches.map((button) => button.clicks), [0, 0, 0]);
-  });
-
-test("finds Search when field labels are rendered outside the shared ancestor", () => {
-  const fixture = filterFixture({ includeLabels: false, nestingDepth: 4 });
-  const search = api.testing.filterSearchButton(api.testing.requireVisibleDateInputs());
-  assert.equal(search, fixture.searches[0]);
+  const fixture = portalFixture({ startPage: 1, pages: [
+    [{ id: "new", timestamp: "09/05/2026 1:00 PM", amount: "-$1" }],
+    [{ id: "match", timestamp: "08/20/2026 1:00 PM", amount: "-$2" }],
+    [{ id: "old", timestamp: "07/31/2026 1:00 PM", amount: "-$3" }]
+  ] });
+  const result = await api.collect({ range: { startDate: "2026-08-01", endDate: "2026-08-31" },
+    parseRecord: fixture.parseRecord, readDom: fixture.readDom });
+  assert.deepEqual(clone(result.records).map(({ id }) => id), ["match"]);
+  assert.equal(result.terminalReason, "older_than_required_range");
+  assert.equal(result.ordering, "descending");
+  assert.equal(result.pageCount, 3);
+  assert.equal(fixture.clicks.previous, 1);
+  assert.equal(fixture.clicks.next, 2);
+  assert.deepEqual([fixture.clicks.transactionDate, fixture.clicks.filter, fixture.clicks.search], [0, 0, 0]);
+  assert.deepEqual(clone(result.observedRange), { startDate: "2026-07-31", endDate: "2026-09-05" });
 });
 
-test("recognizes an input-based transaction Search control", () => {
-  const fixture = filterFixture({ searchCount: 0 });
-  const inputSearch = domNode({ tag: "input", attributes: { type: "submit", value: "Search" } });
-  fixture.panel.append(inputSearch);
-  const search = api.testing.filterSearchButton(api.testing.requireVisibleDateInputs());
-  assert.equal(search, inputSearch);
+test("without explicit descending sort proof collection continues to disabled Next", async () => {
+  const fixture = portalFixture({ descendingSort: false, pages: [
+    [{ id: "new", timestamp: "09/05/2026 1:00 PM", amount: "-$1" }],
+    [{ id: "old", timestamp: "07/31/2026 1:00 PM", amount: "-$2" }],
+    [{ id: "match", timestamp: "08/20/2026 1:00 PM", amount: "-$3" }]
+  ] });
+  const result = await api.collect({ range: { startDate: "2026-08-01", endDate: "2026-08-31" },
+    parseRecord: fixture.parseRecord, readDom: fixture.readDom });
+  assert.equal(result.terminalReason, "next_disabled");
+  assert.equal(result.ordering, "unverified");
+  assert.deepEqual(clone(result.records).map(({ id }) => id), ["match"]);
 });
 
-test("orders date controls semantically and falls back to verified DOM order", () => {
-  const fixture = filterFixture();
-  const reversed = [fixture.inputs[1], fixture.inputs[0]];
-  let ordered = api.testing.orderDateInputs(reversed);
-  assert.equal(ordered[0], fixture.inputs[0]);
-  assert.equal(ordered[1], fixture.inputs[1]);
-  fixture.inputs.forEach((input) => { input.attributes["aria-label"] = "Date"; });
-  ordered = api.testing.orderDateInputs(reversed);
-  assert.equal(ordered[0], reversed[0]);
-  assert.equal(ordered[1], reversed[1]);
+test("active portal filters fail without retaining their values", async () => {
+  const fixture = portalFixture({ activeFilter: true, pages: [[{ id: "one", timestamp: "08/20/2026", amount: "-$1" }]] });
+  assert.equal(api.testing.hasActivePortalFilters(), true);
+  await assert.rejects(api.collect({ range: { startDate: "2026-08-01", endDate: "2026-08-31" },
+    parseRecord: fixture.parseRecord, readDom: fixture.readDom }), /active date, tag, or plate filter/);
 });
 
-test("hydrates masked date inputs with typing events before Search enables", async () => {
-  const fixture = filterFixture({ searchDisabled: true });
-  const enableWhenReady = (event) => {
-    if (event.type === "keyup" && fixture.inputs.every((input) => String(input.value).replace(/\D/g, "").length === 6)) {
-      fixture.searches[0].disabled = false;
-    }
-  };
-  fixture.inputs.forEach((input) => { input.dispatchEvent = (event) => {
-    input.events.push(event); enableWhenReady(event); return true;
-  }; });
-  await api.testing.commitDateInput(fixture.inputs[0], "08/01/26");
-  assert.equal(fixture.searches[0].disabled, true);
-  await api.testing.commitDateInput(fixture.inputs[1], "08/14/26");
-  assert.equal(fixture.searches[0].disabled, false);
-  assert.ok(fixture.inputs[0].events.some((event) => event.type === "beforeinput"));
-  assert.ok(fixture.inputs[0].events.some((event) => event.type === "keyup"));
-  assert.equal(api.testing.filterSearchButton(fixture.inputs), fixture.searches[0]);
+test("missing and repeated pagination controls fail safely", async () => {
+  const missing = portalFixture({ omitPrevious: true, pages: [[{ id: "one", timestamp: "08/20/2026", amount: "-$1" }]] });
+  await assert.rejects(api.collect({ range: { startDate: "2026-08-01", endDate: "2026-08-31" },
+    parseRecord: missing.parseRecord, readDom: missing.readDom }), /Previous pagination control is missing/);
+  const repeated = portalFixture({ repeatNext: true, pages: [
+    [{ id: "one", timestamp: "09/05/2026", amount: "-$1" }],
+    [{ id: "two", timestamp: "08/20/2026", amount: "-$2" }]
+  ] });
+  await assert.rejects(api.collect({ range: { startDate: "2026-08-01", endDate: "2026-08-31" },
+    parseRecord: repeated.parseRecord, readDom: repeated.readDom }), /finish loading|repeated/i);
 });
 
-test("uses Chromium editing with digits only and lets the portal mask add separators", async () => {
-  const fixture = filterFixture();
-  const input = fixture.inputs[0];
-  const inserted = [];
-  context.document.execCommand = (command, _showUi, value) => {
-    if (command === "delete") { input.value = ""; return true; }
-    if (command !== "insertText") return false;
-    inserted.push(value);
-    const digits = `${String(input.value).replace(/\D/g, "")}${value}`;
-    input.value = [digits.slice(0, 2), digits.slice(2, 4), digits.slice(4, 6)].filter(Boolean).join("/");
-    return true;
-  };
-  try {
-    await api.testing.commitDateInput(input, "08/01/26");
-    assert.deepEqual(inserted, ["0", "8", "0", "1", "2", "6"]);
-    assert.equal(input.value, "08/01/26");
-  } finally { delete context.document.execCommand; }
-});
-
-test("rejects a date value the portal mask does not accept and emits sanitized diagnostics", async () => {
-  const fixture = filterFixture();
-  Object.defineProperty(fixture.inputs[0], "value", { configurable: true, get: () => "", set() {} });
-  await assert.rejects(api.testing.commitDateInput(fixture.inputs[0], "08/01/26"),
-    /rejected a requested date.*"accepted":false.*"valid":true/);
-  const diagnostics = api.testing.controlDiagnostics(fixture.inputs, fixture.searches[0]);
-  assert.doesNotMatch(diagnostics, /08\/01\/26/);
-});
-
-test("rejects missing, hidden, disabled, duplicate, and structurally unsupported filter Search controls", () => {
-  for (const options of [
-    { searchCount: 0 }, { searchVisible: false }, { searchDisabled: true }, { searchCount: 2 }
-  ]) {
-    filterFixture(options);
-    assert.throws(() => api.testing.filterSearchButton(api.testing.requireVisibleDateInputs()), /Search|filter/);
-  }
-});
-
-test("rejects ambiguous visible date-input groups and reports the navigation phase", () => {
-  filterFixture({ dateCount: 3 });
-  assert.throws(() => api.testing.requireVisibleDateInputs(), /exactly two/);
+test("route changes are attributed to pagination", () => {
   context.location.href = "https://www.e-zpassny.com/ezpass/dashboard/search";
-  assert.throws(() => api.testing.assertRoute("transaction-filter search"), /transaction-filter search.*\/ezpass\/dashboard\/search/);
+  assert.throws(() => api.testing.assertRoute("pagination"), /pagination.*\/ezpass\/dashboard\/search/);
   context.location.href = "https://www.e-zpassny.com/ezpass/dashboard/transactions";
 });
