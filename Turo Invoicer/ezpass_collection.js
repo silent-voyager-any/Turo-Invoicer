@@ -349,27 +349,88 @@
     return null;
   }
 
+  const monthSerial = ({ year, month }) => year * 12 + month;
+  const monthLabel = ({ year, month }) => `${year}-${String(month + 1).padStart(2, "0")}`;
+  const shiftedMonth = (shown, direction) => {
+    const date = new Date(Date.UTC(shown.year, shown.month + direction, 1));
+    return { year: date.getUTCFullYear(), month: date.getUTCMonth() };
+  };
+
+  function visibleCalendarDialog() {
+    const dialogs = controls(document, '[role="dialog"]').filter(isVisible);
+    if (dialogs.length > 1) throw new Error("E-ZPass exposed multiple visible calendar dialogs.");
+    return dialogs[0] || null;
+  }
+
+  function timestampDate(node) {
+    const raw = node?.getAttribute?.("data-timestamp");
+    if (raw == null || !/^-?\d+$/.test(String(raw))) return null;
+    const date = new Date(Number(raw));
+    if (!Number.isFinite(date.getTime())) return null;
+    // The portal's calendar timestamp represents midnight in the browser's
+    // local zone. Local fields therefore identify the date shown by the UI.
+    return { year: date.getFullYear(), month: date.getMonth() + 1, day: date.getDate() };
+  }
+
+  function calendarDayControl(dialog, target) {
+    const shown = dialogMonth(dialog);
+    if (!shown || shown.year !== target.year || shown.month !== target.month - 1) {
+      throw new Error(`E-ZPass calendar did not reach target month ${target.year}-${String(target.month).padStart(2, "0")}.`);
+    }
+    const candidates = controls(dialog, 'button, [role="button"], [role="gridcell"], [data-timestamp]')
+      .filter((node) => isVisible(node) && !isDisabled(node) && /^\d{1,2}$/.test(normalizedText(node)));
+    const timestamped = candidates.filter((node) => timestampDate(node));
+    if (timestamped.length) {
+      const exact = timestamped.filter((node) => {
+        const date = timestampDate(node);
+        return date.year === target.year && date.month === target.month && date.day === target.day;
+      });
+      if (!exact.length) throw new Error("E-ZPass full-date calendar day control was not found.");
+      if (exact.length > 1) throw new Error("E-ZPass exposed multiple matching full-date calendar day controls.");
+      return exact[0];
+    }
+    const fallback = candidates.filter((node) => normalizedText(node) === String(target.day));
+    if (!fallback.length) throw new Error("E-ZPass calendar day control was not found in the proven target month.");
+    if (fallback.length > 1) throw new Error("E-ZPass calendar day text is ambiguous in the proven target month.");
+    return fallback[0];
+  }
+
+  async function waitForCalendarMonth(previous, expected) {
+    return waitFor(() => {
+      const dialog = visibleCalendarDialog();
+      if (!dialog) return null;
+      const shown = dialogMonth(dialog);
+      if (!shown) return null;
+      if (monthSerial(shown) === monthSerial(expected)) return dialog;
+      if (monthSerial(shown) !== monthSerial(previous)) {
+        throw new Error(`E-ZPass calendar skipped the expected month ${monthLabel(expected)}.`);
+      }
+      return null;
+    }, 2500, `E-ZPass calendar month navigation stalled at ${monthLabel(previous)}.`);
+  }
+
   async function setCalendarDate(input, iso) {
     if (inputDate(input.value) === iso) return;
     const target = isoParts(iso);
     datePickerButton(input).click();
-    const dialog = await waitFor(() => controls(document, '[role="dialog"]').find(isVisible), 3000,
+    let dialog = await waitFor(() => visibleCalendarDialog(), 3000,
       "E-ZPass calendar did not open.");
-    for (let attempts = 0; attempts < 24; attempts += 1) {
+    let attempts = 0;
+    for (;;) {
       const shown = dialogMonth(dialog);
       if (!shown) throw new Error("E-ZPass calendar month heading is unavailable.");
       const delta = (target.year - shown.year) * 12 + target.month - 1 - shown.month;
       if (!delta) break;
+      if (attempts >= 24) throw new Error(`E-ZPass calendar did not reach target month ${target.year}-${String(target.month).padStart(2, "0")}.`);
       const direction = delta > 0 ? /next month/i : /previous month/i;
       const nav = buttons(dialog).filter((node) => isVisible(node) && direction.test(normalizedText(node)));
       if (nav.length !== 1 || isDisabled(nav[0])) throw new Error("E-ZPass calendar cannot reach the requested trip date.");
+      const expected = shiftedMonth(shown, delta > 0 ? 1 : -1);
       nav[0].click();
-      await sleep(80);
+      dialog = await waitForCalendarMonth(shown, expected);
+      attempts += 1;
     }
-    const days = buttons(dialog).filter((node) => isVisible(node) && !isDisabled(node) &&
-      normalizedText(node) === String(target.day));
-    if (days.length !== 1) throw new Error("E-ZPass calendar day is missing or ambiguous.");
-    days[0].click();
+    calendarDayControl(dialog, target).click();
     await waitFor(() => inputDate(input.value) === iso, 2000, "E-ZPass did not accept a calendar date.");
   }
 
@@ -604,7 +665,8 @@
     validateRange, validateQueries, collect,
     testing: Object.freeze({ hasActivePortalFilters, hasDescendingTransactionSort, localTimestampKey, pageChronology,
       paginationRoot, activePageNumber, nextControl, previousControl, maximizePageSize, rewindToFirstPage, assertRoute,
-      inputDate, visibleDateInputs, accessibleControlName, namedCombos, transactionFilterControls,
+      inputDate, visibleDateInputs, dialogMonth, timestampDate, calendarDayControl, waitForCalendarMonth, setCalendarDate,
+      accessibleControlName, namedCombos, transactionFilterControls,
       snapshotFilters, applyQuery, restoreFilters }),
     constants: Object.freeze({ MAX_TOTAL_PAGES })
   });

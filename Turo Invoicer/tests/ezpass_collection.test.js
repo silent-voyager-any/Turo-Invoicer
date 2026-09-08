@@ -119,6 +119,99 @@ test("distinguishes duplicate and missing labelled filter controls", () => {
   assert.throws(() => api.testing.transactionFilterControls([fixture.start, fixture.end]), /Tag\/Plate # filter was not found/);
 });
 
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August",
+  "September", "October", "November", "December"];
+
+function calendarFixture({ year = 2026, month = 9, delayMs = 180, stall = false, skip = false } = {}) {
+  let shown = { year, month };
+  let dialog = null;
+  let open = false;
+  let dialogBuilds = 0;
+  let navClicks = 0;
+  const localTimestamp = (day) => new Date(shown.year, shown.month - 1, day).getTime();
+  const formattedInput = (day) => `${String(shown.month).padStart(2, "0")}/${String(day).padStart(2, "0")}/${String(shown.year).slice(-2)}`;
+  const input = visibleElement({ value: "", labels: [{ textContent: "Start Date" }] });
+  const main = { querySelectorAll: () => [] };
+
+  const buildDialog = () => {
+    dialogBuilds += 1;
+    const heading = { textContent: `${MONTHS[shown.month - 1]} ${shown.year}`, getAttribute: () => null };
+    const shift = (direction) => {
+      navClicks += 1;
+      if (stall) return;
+      setTimeout(() => {
+        const date = new Date(Date.UTC(shown.year, shown.month - 1 + direction * (skip ? 2 : 1), 1));
+        shown = { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1 };
+        dialog = buildDialog();
+      }, delayMs);
+    };
+    const navigation = (ariaLabel, direction) => visibleElement({ textContent: "",
+      attributes: { "aria-label": ariaLabel }, click: () => shift(direction) });
+    const days = Array.from({ length: new Date(Date.UTC(shown.year, shown.month, 0)).getUTCDate() }, (_, index) => {
+      const day = index + 1;
+      return visibleElement({ textContent: String(day), attributes: { role: "gridcell", "data-timestamp": String(localTimestamp(day)) },
+        click: () => { input.value = formattedInput(day); open = false; } });
+    });
+    const controls = [navigation("Previous month", -1), navigation("Next month", 1), ...days];
+    return visibleElement({
+      querySelectorAll(selector) {
+        if (selector === "*") return [heading, ...days];
+        if (selector === "button, [role='button'], input[type='submit'], input[type='button']" ||
+            selector === 'button, [role="button"], [role="gridcell"], [data-timestamp]') return controls;
+        return [];
+      }
+    });
+  };
+  const picker = visibleElement({ textContent: "Choose date", click: () => { open = true; dialog = buildDialog(); } });
+  const field = {
+    parentElement: main,
+    querySelectorAll: (selector) => selector === "button, [role='button'], input[type='submit'], input[type='button']" ? [picker] : []
+  };
+  input.parentElement = field;
+  context.document = {
+    body: { textContent: "" },
+    querySelector: (selector) => selector === "main, [role='main']" ? main : null,
+    querySelectorAll: (selector) => selector === '[role="dialog"]' && open ? [dialog] : []
+  };
+  return { input, get dialogBuilds() { return dialogBuilds; }, get navClicks() { return navClicks; } };
+}
+
+test("calendar waits for delayed month hydration and reacquires replaced dialogs", async () => {
+  context.location.href = "https://www.e-zpassny.com/ezpass/dashboard/transactions";
+  const fixture = calendarFixture({ month: 9, delayMs: 180 });
+  await api.testing.setCalendarDate(fixture.input, "2026-07-31");
+  assert.equal(fixture.input.value, "07/31/26");
+  assert.equal(fixture.navClicks, 2);
+  assert.ok(fixture.dialogBuilds >= 3);
+});
+
+test("calendar day selection uses the complete timestamp-backed date", () => {
+  const day = (year, month, date) => visibleElement({ textContent: String(date),
+    attributes: { role: "gridcell", "data-timestamp": String(new Date(year, month - 1, date).getTime()) } });
+  const correct = day(2026, 7, 31), adjacent = day(2026, 8, 31);
+  const heading = { textContent: "July 2026", getAttribute: () => null };
+  const dialog = { querySelectorAll: (selector) => selector === "*" ? [heading, correct, adjacent] : [correct, adjacent] };
+  assert.equal(api.testing.calendarDayControl(dialog, { year: 2026, month: 7, day: 31 }), correct);
+
+  const duplicate = day(2026, 7, 31);
+  const ambiguous = { querySelectorAll: (selector) => selector === "*" ? [heading, correct, duplicate] : [correct, duplicate] };
+  assert.throws(() => api.testing.calendarDayControl(ambiguous, { year: 2026, month: 7, day: 31 }), /multiple matching full-date/);
+
+  const missing = { querySelectorAll: (selector) => selector === "*" ? [heading, adjacent] : [adjacent] };
+  assert.throws(() => api.testing.calendarDayControl(missing, { year: 2026, month: 7, day: 31 }), /full-date.*not found/);
+
+  const fallbackDay = visibleElement({ textContent: "31" });
+  const fallback = { querySelectorAll: (selector) => selector === "*" ? [heading, fallbackDay] : [fallbackDay] };
+  assert.equal(api.testing.calendarDayControl(fallback, { year: 2026, month: 7, day: 31 }), fallbackDay);
+});
+
+test("calendar navigation rejects skipped and stalled months", async () => {
+  let fixture = calendarFixture({ month: 9, delayMs: 20, skip: true });
+  await assert.rejects(api.testing.setCalendarDate(fixture.input, "2026-08-30"), /skipped the expected month/);
+  fixture = calendarFixture({ month: 9, stall: true });
+  await assert.rejects(api.testing.setCalendarDate(fixture.input, "2026-08-30"), /navigation stalled/);
+});
+
 test("proves descending page chronology and rejects boundary reversals", () => {
   const first = api.testing.pageChronology({ raw: [
     { timestamp: "09/05/2026 1:00 PM" }, { timestamp: "09/04/2026 1:00 PM" }

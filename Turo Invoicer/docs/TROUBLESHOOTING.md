@@ -53,6 +53,8 @@ Network records take precedence over DOM records. Stale partial network capture 
 
 ## E-ZPass filters and manual tags
 
+Version 0.5.2 waits for the calendar heading to advance after every month navigation and selects each day through its complete `data-timestamp` date. A stalled or skipped month, missing full-date control, duplicate full-date control, or rejected selection now produces a distinct safe error instead of the combined “missing or ambiguous” message.
+
 Version 0.5.1 resolves the transaction `Type` and `Tag/Plate #` comboboxes through their accessible labels. The live portal uses native `<label for>` relationships rather than `aria-label` attributes. If either control is reported missing or duplicated, reload the extension and transaction tab; the collector will not fall back to an unrelated page-size or header control.
 
 Version 0.4.7 does not use the E-ZPass date inputs or Search control. It rewinds the existing unfiltered list, selects View 100 when available, and follows the scoped accessible pager until it passes the oldest relevant trip under proven ordering or Next is disabled. The portal can briefly show “No transactions found” between pages; the collector waits for the requested current-page number and stable rows instead of treating that placeholder as final. Clear date, tag, and plate filters before syncing. Exit times with fractional seconds are supported and verified toll debits become positive charge amounts; credits and other non-toll activity are ignored.
