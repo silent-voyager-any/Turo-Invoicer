@@ -4,7 +4,7 @@ A local-first Chrome extension that helps Turo hosts reconcile NY E-ZPass toll a
 
 The extension observes data loaded in your signed-in browser tabs, matches toll timestamps to trip intervals, and presents suggestions for review. It does not require a server, store portal passwords, or submit reimbursement claims.
 
-> **Status: evidence-ready personal release, version 0.5.3.** The extension verifies Turo trips, searches E-ZPass per trip and exact confirmed identifier, groups matches, captures visible evidence locally, and requires individual plus immutable batch approval. Reimbursement submission remains disabled pending verified upload fixtures.
+> **Status: evidence-ready personal release, version 0.5.4.** The extension verifies Turo trips, searches E-ZPass per trip and exact confirmed identifier, groups matches, captures visible evidence locally, and requires individual plus immutable batch approval. Reimbursement submission remains disabled pending verified upload fixtures.
 
 ## Features
 
@@ -19,7 +19,11 @@ The extension observes data loaded in your signed-in browser tabs, matches toll 
 - Local snapshots, atomic two-source sync, and a clear-data control.
 - No backend uploads, analytics, remote scripts, or automatic claim submission.
 
-## Version 0.5.3 update
+## Version 0.5.4 update
+
+E-ZPass calendar selection now distinguishes real date-picker dialogs from unrelated portal dialogs. During a user-started sync, the collector safely selects the unique **continue working** action in the verified session-expiry dialog and resumes without confusing that modal for a second calendar.
+
+Version 0.5.3 added normalized calendar input handling:
 
 E-ZPass pagination now follows the portal's visible accessible pager, ignores the transient “No transactions found” placeholder during page changes, and selects 100 rows per page when available. Turo history is accepted only with stable numeric reservation cards and its terminal footer. A single temporary inactive Turo tab checks each completed reservation's invoice hub, deduplicated invoice-detail pages, and toll-request eligibility; it is always closed after verification. Only normalized status metadata is stored.
 

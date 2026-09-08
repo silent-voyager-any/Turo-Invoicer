@@ -31,6 +31,8 @@
   const isDisabled = (node) => Boolean(node?.disabled || node?.getAttribute?.("aria-disabled") === "true");
   const isVisible = (node) => Boolean(node && !node.hidden && node.getAttribute?.("aria-hidden") !== "true" &&
     (node.offsetParent !== null || node.getClientRects?.().length));
+  let collectionActive = false;
+  let sessionContinuation = null;
 
   function transactionMain() {
     return document.querySelector("main, [role='main']") || document.body;
@@ -78,6 +80,45 @@
     if (path !== TRANSACTIONS_PATH) throw new Error(`E-ZPass left the transactions page during ${phase} (${path || "/"}).`);
   }
 
+  function sessionExpiryDialogs() {
+    return controls(document, '[role="dialog"]').filter((dialog) => {
+      if (!isVisible(dialog)) return false;
+      const text = normalizedText(dialog);
+      return /session will expire soon/i.test(text) && /automatically logged out/i.test(text);
+    });
+  }
+
+  async function continueActiveSessionIfNeeded(force = false) {
+    if (!collectionActive && !force) return false;
+    if (sessionContinuation) return sessionContinuation;
+    const dialogs = sessionExpiryDialogs();
+    if (!dialogs.length) return false;
+    if (dialogs.length !== 1) throw new Error("E-ZPass exposed multiple session-expiry dialogs during sync.");
+    const dialog = dialogs[0];
+    const matches = buttons(dialog).filter((node) => isVisible(node) && !isDisabled(node) &&
+      /^continue working$/i.test(normalizedText(node)));
+    if (matches.length !== 1) throw new Error("E-ZPass session-expiry dialog has an unavailable or ambiguous Continue working control.");
+    sessionContinuation = (async () => {
+      matches[0].click();
+      const end = Date.now() + 4000;
+      while (Date.now() < end) {
+        assertRoute("session continuation");
+        if (!sessionExpiryDialogs().length) return true;
+        await sleep(100);
+      }
+      throw new Error("E-ZPass session-expiry dialog did not close after continuing the session.");
+    })();
+    try { return await sessionContinuation; }
+    finally { sessionContinuation = null; }
+  }
+
+  async function portalAction(node, phase) {
+    assertRoute(phase);
+    await continueActiveSessionIfNeeded();
+    assertRoute(phase);
+    node.click();
+  }
+
   function samplePage(readDom, parseRecord) {
     const raw = [], records = [];
     readDom((candidate) => {
@@ -98,6 +139,7 @@
     const end = Date.now() + timeoutMs;
     while (Date.now() < end) {
       assertRoute(message);
+      await continueActiveSessionIfNeeded();
       const value = predicate();
       if (value) return value;
       await sleep(100);
@@ -183,14 +225,15 @@
     try {
       // MUI mounts its listbox outside the table and opens it on pointer-style
       // interaction. Dispatching mousedown before click mirrors that contract.
+      await continueActiveSessionIfNeeded();
       combos[0].dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-      combos[0].click();
+      await portalAction(combos[0], "page-size menu");
       const option = await waitFor(() => {
         const matches = controls(document, '[role="option"]')
           .filter((node) => isVisible(node) && /^100$/.test(normalizedText(node)));
         return matches.length === 1 ? matches[0] : null;
       }, 2000, "page-size option unavailable");
-      option.click();
+      await portalAction(option, "page-size selection");
       assertRoute("page-size selection");
       return await settledPage(readDom, parseRecord, page.signature, 1);
     } catch {
@@ -227,7 +270,7 @@
       }
       if (!Number.isInteger(page.pageNumber) || page.pageNumber <= 1) throw new Error("E-ZPass current page number is unavailable while rewinding.");
       const expected = page.pageNumber - 1;
-      previous.click();
+      await portalAction(previous, "pagination rewind");
       assertRoute("pagination rewind");
       page = await settledPage(readDom, parseRecord, page.signature, expected);
       if (signatures.has(page.signature)) throw new Error("E-ZPass repeated a result page while rewinding.");
@@ -286,7 +329,7 @@
       if (isDisabled(next)) { terminalReason = "next_disabled"; break; }
       if (!Number.isInteger(page.pageNumber)) throw new Error("E-ZPass current page number is unavailable before advancing.");
       const expected = page.pageNumber + 1;
-      next.click();
+      await portalAction(next, "pagination");
       assertRoute("pagination");
       page = await settledPage(readDom, parseRecord, page.signature, expected);
     }
@@ -343,7 +386,7 @@
     if (controls(transactionMain(), "input").some((node) => isVisible(node) && /startdate|start date/i.test(controlHint(node)))) return;
     const matches = buttons(transactionMain()).filter((node) => isVisible(node) && /^filter$/i.test(normalizedText(node)));
     if (matches.length !== 1) throw new Error("E-ZPass transaction Filter control is missing or ambiguous.");
-    matches[0].click();
+    await portalAction(matches[0], "transaction filter open");
     await waitFor(() => {
       try { return visibleDateInputs(); } catch { return null; }
     }, 3000, "E-ZPass transaction filters did not open.");
@@ -376,10 +419,57 @@
     return { year: date.getUTCFullYear(), month: date.getUTCMonth() };
   };
 
-  function visibleCalendarDialog() {
+  function referencedIds(node) {
+    return ["aria-controls", "aria-owns"].flatMap((name) =>
+      String(node?.getAttribute?.(name) || "").split(/\s+/).filter(Boolean));
+  }
+
+  function calendarDialogStructure(dialog) {
+    const month = dialogMonth(dialog);
+    if (!month) return null;
+    const previous = buttons(dialog).filter((node) => isVisible(node) && /previous month/i.test(normalizedText(node)));
+    const next = buttons(dialog).filter((node) => isVisible(node) && /next month/i.test(normalizedText(node)));
+    const days = controls(dialog, '[role="gridcell"][data-timestamp], [data-timestamp][role="gridcell"]')
+      .filter((node) => isVisible(node) && !isDisabled(node) && timestampDate(node));
+    return previous.length === 1 && next.length === 1 && days.length ? { month, previous: previous[0], next: next[0] } : null;
+  }
+
+  function calendarDialogState(identity, input, picker, expected = null) {
     const dialogs = controls(document, '[role="dialog"]').filter(isVisible);
-    if (dialogs.length > 1) throw new Error("E-ZPass exposed multiple visible calendar dialogs.");
-    return dialogs[0] || null;
+    const calendars = dialogs.map((dialog) => ({ dialog, structure: calendarDialogStructure(dialog) }))
+      .filter((entry) => entry.structure);
+    const rolePattern = identity?.role === "start" ? /\bstart date\b/i :
+      identity?.role === "end" ? /\bend date\b/i : null;
+    const ownedIds = new Set([...referencedIds(input), ...referencedIds(picker)]);
+    let target = calendars.filter(({ dialog }) => {
+      if (dialog.id && ownedIds.has(dialog.id)) return true;
+      return rolePattern ? rolePattern.test(accessibleControlName(dialog)) : false;
+    });
+    // A semantically unnamed calendar is safe only when the date fields could
+    // not themselves be named and exactly one calendar exists.
+    if (!identity?.role && !target.length && calendars.length === 1) target = calendars;
+    const expectedTarget = expected ? target.filter(({ structure }) =>
+      monthSerial(structure.month) === monthSerial(expected)) : target;
+    return { dialogs, calendars, target, expectedTarget };
+  }
+
+  async function waitForCalendarDialog(identity, input, picker, expected = null, timeoutMs = 3000) {
+    const end = Date.now() + timeoutMs;
+    let stable = null, stableSince = 0, last = { dialogs: [], calendars: [], target: [], expectedTarget: [] };
+    while (Date.now() < end) {
+      assertRoute("calendar resolution");
+      await continueActiveSessionIfNeeded();
+      last = calendarDialogState(identity, input, picker, expected);
+      if (last.expectedTarget.length === 1) {
+        const candidate = last.expectedTarget[0].dialog;
+        if (candidate !== stable) { stable = candidate; stableSince = Date.now(); }
+        if (Date.now() - stableSince >= 100) return candidate;
+      } else { stable = null; stableSince = 0; }
+      await sleep(50);
+    }
+    const role = identity?.role ? `${identity.role} date` : "unnamed date";
+    throw new Error(`E-ZPass ${role} calendar was missing or ambiguous ` +
+      `(dialogs=${last.dialogs.length}, calendars=${last.calendars.length}, target=${last.target.length}).`);
   }
 
   function timestampDate(node) {
@@ -415,27 +505,32 @@
     return fallback[0];
   }
 
-  async function waitForCalendarMonth(previous, expected) {
-    return waitFor(() => {
-      const dialog = visibleCalendarDialog();
-      if (!dialog) return null;
-      const shown = dialogMonth(dialog);
-      if (!shown) return null;
-      if (monthSerial(shown) === monthSerial(expected)) return dialog;
-      if (monthSerial(shown) !== monthSerial(previous)) {
+  async function waitForCalendarMonth(previous, expected, identity, input, picker) {
+    const end = Date.now() + 2500;
+    while (Date.now() < end) {
+      const state = calendarDialogState(identity, reacquireDateInput(identity) || input, picker, expected);
+      if (state.expectedTarget.length === 1) {
+        return waitForCalendarDialog(identity, reacquireDateInput(identity) || input, picker, expected,
+          Math.max(150, end - Date.now()));
+      }
+      const shown = state.target.map(({ structure }) => structure.month);
+      if (shown.some((month) => monthSerial(month) !== monthSerial(previous) && monthSerial(month) !== monthSerial(expected))) {
         throw new Error(`E-ZPass calendar skipped the expected month ${monthLabel(expected)}.`);
       }
-      return null;
-    }, 2500, `E-ZPass calendar month navigation stalled at ${monthLabel(previous)}.`);
+      await continueActiveSessionIfNeeded();
+      await sleep(100);
+    }
+    throw new Error(`E-ZPass calendar month navigation stalled at ${monthLabel(previous)}.`);
   }
 
-  async function waitForDateCommit(original, identity, iso, initialValue = normalizedDateInputText(original?.value)) {
+  async function waitForDateCommit(original, identity, picker, iso, initialValue = normalizedDateInputText(original?.value)) {
     const end = Date.now() + 2500;
     let dialogClosed = false, valueChanged = false;
     while (Date.now() < end) {
       assertRoute("calendar date confirmation");
       const candidate = reacquireDateInput(identity);
-      dialogClosed ||= !visibleCalendarDialog();
+      const state = calendarDialogState(identity, candidate || original, picker);
+      dialogClosed ||= state.target.length === 0;
       if (candidate) {
         const raw = String(candidate.value || "");
         valueChanged ||= normalizedDateInputText(raw) !== initialValue;
@@ -460,9 +555,9 @@
     const target = isoParts(iso);
     const identity = dateInputIdentity(input);
     const initialValue = normalizedDateInputText(input.value);
-    datePickerButton(input).click();
-    let dialog = await waitFor(() => visibleCalendarDialog(), 3000,
-      "E-ZPass calendar did not open.");
+    const picker = datePickerButton(input);
+    await portalAction(picker, "calendar open");
+    let dialog = await waitForCalendarDialog(identity, input, picker);
     let attempts = 0;
     for (;;) {
       const shown = dialogMonth(dialog);
@@ -474,12 +569,12 @@
       const nav = buttons(dialog).filter((node) => isVisible(node) && direction.test(normalizedText(node)));
       if (nav.length !== 1 || isDisabled(nav[0])) throw new Error("E-ZPass calendar cannot reach the requested trip date.");
       const expected = shiftedMonth(shown, delta > 0 ? 1 : -1);
-      nav[0].click();
-      dialog = await waitForCalendarMonth(shown, expected);
+      await portalAction(nav[0], "calendar month navigation");
+      dialog = await waitForCalendarMonth(shown, expected, identity, input, picker);
       attempts += 1;
     }
-    calendarDayControl(dialog, target).click();
-    await waitForDateCommit(input, identity, iso, initialValue);
+    await portalAction(calendarDayControl(dialog, target), "calendar day selection");
+    await waitForDateCommit(input, identity, picker, iso, initialValue);
   }
 
   const compactText = (value) => String(value || "").replace(/\s+/g, " ").trim();
@@ -543,13 +638,14 @@
   }
 
   async function selectCombo(combo, matcher, label) {
+    await continueActiveSessionIfNeeded();
     combo.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-    combo.click();
+    await portalAction(combo, `${label} menu`);
     const option = await waitFor(() => {
       const matches = controls(document, '[role="option"]').filter((node) => isVisible(node) && matcher(normalizedText(node)));
       return matches.length === 1 ? matches[0] : null;
     }, 2500, `E-ZPass ${label} option is unavailable.`);
-    option.click();
+    await portalAction(option, `${label} selection`);
     await sleep(80);
   }
 
@@ -590,7 +686,7 @@
       "exact tag/plate");
     const search = filters.search;
     await waitFor(() => !isDisabled(search) && search, 5000, "E-ZPass Search remained disabled after applying trip filters.");
-    search.click();
+    await portalAction(search, "trip filter search");
     assertRoute("trip filter search");
     let page = await settledPage(readDom, parseRecord, null);
     const fits = (candidate) => candidate.noTransactions || candidate.records.every((record) => {
@@ -609,7 +705,7 @@
   async function restoreFilters(snapshot) {
     assertRoute("filter restoration");
     await ensureFilterOpen();
-    clearFilterButton().click();
+    await portalAction(clearFilterButton(), "filter restoration clear");
     await sleep(150);
     if (!snapshot.startDate || !snapshot.endDate) { await restoreViewSize(snapshot.view); return; }
     const inputs = visibleDateInputs();
@@ -622,7 +718,7 @@
     }
     const search = filters.search;
     await waitFor(() => !isDisabled(search) && search, 5000, "E-ZPass Search remained disabled while restoring filters.");
-    search.click();
+    await portalAction(search, "filter restoration search");
     await sleep(350);
     await restoreViewSize(snapshot.view);
   }
@@ -659,7 +755,7 @@
       if (!next) throw new Error("E-ZPass Next control is missing from filtered results.");
       if (isDisabled(next)) break;
       const expected = page.pageNumber + 1;
-      next.click();
+      await portalAction(next, "filtered pagination");
       page = await settledPage(readDom, parseRecord, page.signature, expected);
     }
     return { records, pageCount, rawCount };
@@ -706,7 +802,15 @@
   }
 
   async function collect(options) {
-    return options.queryJobs ? collectQueries(options) : collectRange(options);
+    if (collectionActive) throw new Error("E-ZPass collection is already running in this tab.");
+    collectionActive = true;
+    try {
+      await continueActiveSessionIfNeeded();
+      return await (options.queryJobs ? collectQueries(options) : collectRange(options));
+    } finally {
+      collectionActive = false;
+      sessionContinuation = null;
+    }
   }
 
   globalThis.EzpassCollection = Object.freeze({
@@ -714,7 +818,9 @@
     testing: Object.freeze({ hasActivePortalFilters, hasDescendingTransactionSort, localTimestampKey, pageChronology,
       paginationRoot, activePageNumber, nextControl, previousControl, maximizePageSize, rewindToFirstPage, assertRoute,
       normalizedDateInputText, inputDate, dateInputRole, visibleDateInputs, reacquireDateInput,
-      dialogMonth, timestampDate, calendarDayControl, waitForCalendarMonth, waitForDateCommit, setCalendarDate,
+      dialogMonth, timestampDate, calendarDayControl, calendarDialogStructure, calendarDialogState,
+      waitForCalendarDialog, waitForCalendarMonth, waitForDateCommit, setCalendarDate,
+      sessionExpiryDialogs, continueActiveSessionIfNeeded,
       accessibleControlName, namedCombos, transactionFilterControls,
       snapshotFilters, applyQuery, restoreFilters }),
     constants: Object.freeze({ MAX_TOTAL_PAGES })

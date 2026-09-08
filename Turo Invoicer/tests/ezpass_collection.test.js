@@ -139,7 +139,8 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July", 
   "September", "October", "November", "December"];
 
 function calendarFixture({ year = 2026, month = 9, delayMs = 180, stall = false, skip = false,
-  replaceInput = false, bidiMarks = false, commitDelayMs = 0, acceptedDayOffset = 0 } = {}) {
+  replaceInput = false, bidiMarks = false, commitDelayMs = 0, acceptedDayOffset = 0,
+  extraDialogs = [] } = {}) {
   let shown = { year, month };
   let dialog = null;
   let open = false;
@@ -183,9 +184,10 @@ function calendarFixture({ year = 2026, month = 9, delayMs = 180, stall = false,
         } });
     });
     const controls = [navigation("Previous month", -1), navigation("Next month", 1), ...days];
-    return visibleElement({
+    return visibleElement({ attributes: { "aria-label": "Start Date" },
       querySelectorAll(selector) {
         if (selector === "*") return [heading, ...days];
+        if (selector === '[role="gridcell"][data-timestamp], [data-timestamp][role="gridcell"]') return days;
         if (selector === "button, [role='button'], input[type='submit'], input[type='button']" ||
             selector === 'button, [role="button"], [role="gridcell"], [data-timestamp]') return controls;
         return [];
@@ -202,7 +204,7 @@ function calendarFixture({ year = 2026, month = 9, delayMs = 180, stall = false,
   context.document = {
     body: { textContent: "" },
     querySelector: (selector) => selector === "main, [role='main']" ? main : null,
-    querySelectorAll: (selector) => selector === '[role="dialog"]' && open ? [dialog] : []
+    querySelectorAll: (selector) => selector === '[role="dialog"]' ? [...(open ? [dialog] : []), ...extraDialogs] : []
   };
   return { initialInput, get input() { return input; }, get dialogBuilds() { return dialogBuilds; }, get navClicks() { return navClicks; } };
 }
@@ -222,6 +224,66 @@ test("calendar accepts marked values from a delayed replacement input", async ()
   assert.notEqual(fixture.input, fixture.initialInput);
   assert.equal(api.testing.inputDate(fixture.input.value), "2026-09-01");
   assert.equal(fixture.input.value, "9\u200e/1\u200e/26");
+});
+
+test("calendar ignores a simultaneous non-calendar session dialog", async () => {
+  const sessionDialog = visibleElement({ textContent: "Session will expire soon You will be automatically logged out",
+    querySelectorAll: () => [] });
+  const fixture = calendarFixture({ month: 9, extraDialogs: [sessionDialog] });
+  await api.testing.setCalendarDate(fixture.input, "2026-09-01");
+  assert.equal(fixture.input.value, "09/01/26");
+});
+
+test("calendar resolver binds Start Date, ignores End Date, and rejects duplicate targets", async () => {
+  const fixture = calendarFixture({ month: 9 });
+  const start = fixture.initialInput;
+  const picker = start.parentElement.querySelectorAll("button, [role='button'], input[type='submit'], input[type='button']")[0];
+  picker.click();
+  const startDialog = context.document.querySelectorAll('[role="dialog"]')[0];
+  const endDialog = visibleElement({ attributes: { "aria-label": "End Date" },
+    querySelectorAll: (selector) => startDialog.querySelectorAll(selector) });
+  const original = context.document.querySelectorAll;
+  context.document.querySelectorAll = (selector) => selector === '[role="dialog"]' ? [startDialog, endDialog] : original(selector);
+  const state = api.testing.calendarDialogState({ role: "start", index: 0 }, start, picker);
+  assert.equal(state.calendars.length, 2);
+  assert.equal(state.target.length, 1);
+  assert.equal(state.target[0].dialog, startDialog);
+
+  const duplicateStart = visibleElement({ attributes: { "aria-label": "Start Date" },
+    querySelectorAll: (selector) => startDialog.querySelectorAll(selector) });
+  context.document.querySelectorAll = (selector) => selector === '[role="dialog"]' ?
+    [startDialog, endDialog, duplicateStart] : original(selector);
+  await assert.rejects(api.testing.waitForCalendarDialog({ role: "start", index: 0 }, start, picker, null, 150),
+    /start date calendar was missing or ambiguous.*target=2/);
+});
+
+test("continues only the exact E-ZPass session-expiry dialog action", async () => {
+  let open = true, clicks = 0;
+  const continueButton = visibleElement({ textContent: "continue working", click() { clicks += 1; open = false; } });
+  const logoutButton = visibleElement({ textContent: "logout", click() { throw new Error("logout must not be clicked"); } });
+  const dialog = visibleElement({ textContent: "Session will expire soon You will be automatically logged out for security reason",
+    querySelectorAll: (selector) => selector === "button, [role='button'], input[type='submit'], input[type='button']" ?
+      [continueButton, logoutButton] : [] });
+  context.document = {
+    body: { textContent: "" },
+    querySelector: () => null,
+    querySelectorAll: (selector) => selector === '[role="dialog"]' && open ? [dialog] : []
+  };
+  assert.equal(await api.testing.continueActiveSessionIfNeeded(true), true);
+  assert.equal(clicks, 1);
+});
+
+test("session continuation is sync-scoped and rejects ambiguous actions", async () => {
+  const button = () => visibleElement({ textContent: "continue working", click() {} });
+  const dialog = visibleElement({ textContent: "Session will expire soon You will be automatically logged out",
+    querySelectorAll: (selector) => selector === "button, [role='button'], input[type='submit'], input[type='button']" ?
+      [button(), button()] : [] });
+  context.document = {
+    body: { textContent: "" }, querySelector: () => null,
+    querySelectorAll: (selector) => selector === '[role="dialog"]' ? [dialog] : []
+  };
+  assert.equal(await api.testing.continueActiveSessionIfNeeded(), false);
+  await assert.rejects(api.testing.continueActiveSessionIfNeeded(true), /ambiguous Continue working/);
 });
 
 test("calendar rejects a different committed date", async () => {

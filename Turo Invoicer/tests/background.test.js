@@ -14,7 +14,7 @@ let managedUrl = null;
 const existingTollInvoices = new Set();
 const portalResponses = {
   1: { ok: true, source: "turo", complete: true, pagePath: "/us/en/trips/history", records: [{ id: "1001", vehicleId: "car1", start: "2026-07-01 09:00", end: "2026-07-01 18:00", vehicleLabel: "Example car", vehiclePlate: "NY:ABC-123", guestName: "Synthetic private field" }] },
-  2: { ok: true, source: "ezpass", complete: true, completeForRange: true, collectorRevision: "0.5.3-trip-query-4", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, tagOrPlate: "ABC123", queryId: "1001:plate:ABC123", queryReservationId: "1001", queryVehicleId: "car1", queryKind: "plate", queryIdentifier: "NY:ABC-123", accountNumber: "Synthetic private field" }] }
+  2: { ok: true, source: "ezpass", complete: true, completeForRange: true, collectorRevision: "0.5.4-trip-query-5", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, tagOrPlate: "ABC123", queryId: "1001:plate:ABC123", queryReservationId: "1001", queryVehicleId: "car1", queryKind: "plate", queryIdentifier: "NY:ABC-123", accountNumber: "Synthetic private field" }] }
 };
 globalThis.chrome = {
   runtime: { id: "test-id", getURL: (file) => "chrome-extension://test-id/" + file,
