@@ -371,7 +371,7 @@
     const role = dateInputRole(input);
     if (role) return { role, index: role === "start" ? 0 : 1 };
     const index = visibleDateInputs().indexOf(input);
-    if (index < 0) throw new Error("E-ZPass calendar target input could not be identified.");
+    if (index < 0) throw new Error("E-ZPass date input could not be identified.");
     return { role: null, index };
   }
 
@@ -392,189 +392,109 @@
     }, 3000, "E-ZPass transaction filters did not open.");
   }
 
-  function datePickerButton(input) {
-    for (let root = input.parentElement; root && root !== transactionMain(); root = root.parentElement) {
-      const matches = buttons(root).filter((node) => isVisible(node) && /^choose date$/i.test(normalizedText(node)));
-      if (matches.length === 1) return matches[0];
-      if (matches.length > 1) break;
-    }
-    throw new Error("E-ZPass calendar button is missing beside a date input.");
-  }
-
-  const monthIndex = (name) => ["january", "february", "march", "april", "may", "june", "july", "august",
-    "september", "october", "november", "december"].indexOf(String(name).toLowerCase());
-
-  function dialogMonth(dialog) {
-    for (const node of controls(dialog, "*")) {
-      const match = normalizedText(node).match(/^(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})$/i);
-      if (match) return { month: monthIndex(match[1]), year: Number(match[2]) };
-    }
-    return null;
-  }
-
-  const monthSerial = ({ year, month }) => year * 12 + month;
-  const monthLabel = ({ year, month }) => `${year}-${String(month + 1).padStart(2, "0")}`;
-  const shiftedMonth = (shown, direction) => {
-    const date = new Date(Date.UTC(shown.year, shown.month + direction, 1));
-    return { year: date.getUTCFullYear(), month: date.getUTCMonth() };
-  };
-
-  function referencedIds(node) {
-    return ["aria-controls", "aria-owns"].flatMap((name) =>
-      String(node?.getAttribute?.(name) || "").split(/\s+/).filter(Boolean));
-  }
-
-  function calendarDialogStructure(dialog) {
-    const month = dialogMonth(dialog);
-    if (!month) return null;
-    const previous = buttons(dialog).filter((node) => isVisible(node) && /previous month/i.test(normalizedText(node)));
-    const next = buttons(dialog).filter((node) => isVisible(node) && /next month/i.test(normalizedText(node)));
-    const days = controls(dialog, '[role="gridcell"][data-timestamp], [data-timestamp][role="gridcell"]')
-      .filter((node) => isVisible(node) && !isDisabled(node) && timestampDate(node));
-    return previous.length === 1 && next.length === 1 && days.length ? { month, previous: previous[0], next: next[0] } : null;
-  }
-
-  function calendarDialogState(identity, input, picker, expected = null) {
-    const dialogs = controls(document, '[role="dialog"]').filter(isVisible);
-    const calendars = dialogs.map((dialog) => ({ dialog, structure: calendarDialogStructure(dialog) }))
-      .filter((entry) => entry.structure);
-    const rolePattern = identity?.role === "start" ? /\bstart date\b/i :
-      identity?.role === "end" ? /\bend date\b/i : null;
-    const ownedIds = new Set([...referencedIds(input), ...referencedIds(picker)]);
-    let target = calendars.filter(({ dialog }) => {
-      if (dialog.id && ownedIds.has(dialog.id)) return true;
-      return rolePattern ? rolePattern.test(accessibleControlName(dialog)) : false;
-    });
-    // A semantically unnamed calendar is safe only when the date fields could
-    // not themselves be named and exactly one calendar exists.
-    if (!identity?.role && !target.length && calendars.length === 1) target = calendars;
-    const expectedTarget = expected ? target.filter(({ structure }) =>
-      monthSerial(structure.month) === monthSerial(expected)) : target;
-    return { dialogs, calendars, target, expectedTarget };
-  }
-
-  async function waitForCalendarDialog(identity, input, picker, expected = null, timeoutMs = 3000) {
-    const end = Date.now() + timeoutMs;
-    let stable = null, stableSince = 0, last = { dialogs: [], calendars: [], target: [], expectedTarget: [] };
-    while (Date.now() < end) {
-      assertRoute("calendar resolution");
-      await continueActiveSessionIfNeeded();
-      last = calendarDialogState(identity, input, picker, expected);
-      if (last.expectedTarget.length === 1) {
-        const candidate = last.expectedTarget[0].dialog;
-        if (candidate !== stable) { stable = candidate; stableSince = Date.now(); }
-        if (Date.now() - stableSince >= 100) return candidate;
-      } else { stable = null; stableSince = 0; }
-      await sleep(50);
-    }
-    const role = identity?.role ? `${identity.role} date` : "unnamed date";
-    throw new Error(`E-ZPass ${role} calendar was missing or ambiguous ` +
-      `(dialogs=${last.dialogs.length}, calendars=${last.calendars.length}, target=${last.target.length}).`);
-  }
-
-  function timestampDate(node) {
-    const raw = node?.getAttribute?.("data-timestamp");
-    if (raw == null || !/^-?\d+$/.test(String(raw))) return null;
-    const date = new Date(Number(raw));
-    if (!Number.isFinite(date.getTime())) return null;
-    // The portal's calendar timestamp represents midnight in the browser's
-    // local zone. Local fields therefore identify the date shown by the UI.
-    return { year: date.getFullYear(), month: date.getMonth() + 1, day: date.getDate() };
-  }
-
-  function calendarDayControl(dialog, target) {
-    const shown = dialogMonth(dialog);
-    if (!shown || shown.year !== target.year || shown.month !== target.month - 1) {
-      throw new Error(`E-ZPass calendar did not reach target month ${target.year}-${String(target.month).padStart(2, "0")}.`);
-    }
-    const candidates = controls(dialog, 'button, [role="button"], [role="gridcell"], [data-timestamp]')
-      .filter((node) => isVisible(node) && !isDisabled(node) && /^\d{1,2}$/.test(normalizedText(node)));
-    const timestamped = candidates.filter((node) => timestampDate(node));
-    if (timestamped.length) {
-      const exact = timestamped.filter((node) => {
-        const date = timestampDate(node);
-        return date.year === target.year && date.month === target.month && date.day === target.day;
-      });
-      if (!exact.length) throw new Error("E-ZPass full-date calendar day control was not found.");
-      if (exact.length > 1) throw new Error("E-ZPass exposed multiple matching full-date calendar day controls.");
-      return exact[0];
-    }
-    const fallback = candidates.filter((node) => normalizedText(node) === String(target.day));
-    if (!fallback.length) throw new Error("E-ZPass calendar day control was not found in the proven target month.");
-    if (fallback.length > 1) throw new Error("E-ZPass calendar day text is ambiguous in the proven target month.");
-    return fallback[0];
-  }
-
-  async function waitForCalendarMonth(previous, expected, identity, input, picker) {
-    const end = Date.now() + 2500;
-    while (Date.now() < end) {
-      const state = calendarDialogState(identity, reacquireDateInput(identity) || input, picker, expected);
-      if (state.expectedTarget.length === 1) {
-        return waitForCalendarDialog(identity, reacquireDateInput(identity) || input, picker, expected,
-          Math.max(150, end - Date.now()));
-      }
-      const shown = state.target.map(({ structure }) => structure.month);
-      if (shown.some((month) => monthSerial(month) !== monthSerial(previous) && monthSerial(month) !== monthSerial(expected))) {
-        throw new Error(`E-ZPass calendar skipped the expected month ${monthLabel(expected)}.`);
-      }
-      await continueActiveSessionIfNeeded();
-      await sleep(100);
-    }
-    throw new Error(`E-ZPass calendar month navigation stalled at ${monthLabel(previous)}.`);
-  }
-
-  async function waitForDateCommit(original, identity, picker, iso, initialValue = normalizedDateInputText(original?.value)) {
-    const end = Date.now() + 2500;
-    let dialogClosed = false, valueChanged = false;
-    while (Date.now() < end) {
-      assertRoute("calendar date confirmation");
-      const candidate = reacquireDateInput(identity);
-      const state = calendarDialogState(identity, candidate || original, picker);
-      dialogClosed ||= state.target.length === 0;
-      if (candidate) {
-        const raw = String(candidate.value || "");
-        valueChanged ||= normalizedDateInputText(raw) !== initialValue;
-        const accepted = inputDate(raw);
-        if (accepted === iso) return candidate;
-        if (dialogClosed && valueChanged && accepted && accepted !== iso) {
-          throw new Error("E-ZPass accepted a different calendar date than requested.");
-        }
-      }
-      await sleep(100);
-    }
-    if (!reacquireDateInput(identity)) {
-      throw new Error("E-ZPass replaced the calendar target input and it could not be reacquired.");
-    }
-    if (dialogClosed && !valueChanged) throw new Error("E-ZPass calendar closed without updating the target input.");
-    if (valueChanged) throw new Error("E-ZPass updated the calendar input with an unsupported or malformed date.");
-    throw new Error("E-ZPass did not accept the requested calendar date.");
-  }
-
-  async function setCalendarDate(input, iso) {
-    if (inputDate(input.value) === iso) return;
+  const portalDate = (iso) => {
     const target = isoParts(iso);
-    const identity = dateInputIdentity(input);
-    const initialValue = normalizedDateInputText(input.value);
-    const picker = datePickerButton(input);
-    await portalAction(picker, "calendar open");
-    let dialog = await waitForCalendarDialog(identity, input, picker);
-    let attempts = 0;
-    for (;;) {
-      const shown = dialogMonth(dialog);
-      if (!shown) throw new Error("E-ZPass calendar month heading is unavailable.");
-      const delta = (target.year - shown.year) * 12 + target.month - 1 - shown.month;
-      if (!delta) break;
-      if (attempts >= 24) throw new Error(`E-ZPass calendar did not reach target month ${target.year}-${String(target.month).padStart(2, "0")}.`);
-      const direction = delta > 0 ? /next month/i : /previous month/i;
-      const nav = buttons(dialog).filter((node) => isVisible(node) && direction.test(normalizedText(node)));
-      if (nav.length !== 1 || isDisabled(nav[0])) throw new Error("E-ZPass calendar cannot reach the requested trip date.");
-      const expected = shiftedMonth(shown, delta > 0 ? 1 : -1);
-      await portalAction(nav[0], "calendar month navigation");
-      dialog = await waitForCalendarMonth(shown, expected, identity, input, picker);
-      attempts += 1;
+    if (!target) throw new Error("E-ZPass received an invalid date for its transaction filter.");
+    return `${String(target.month).padStart(2, "0")}/${String(target.day).padStart(2, "0")}/${String(target.year).slice(-2)}`;
+  };
+  const normalizedDateDigits = (value) => normalizedDateInputText(value).replace(/\D/g, "");
+  const maskedDatePrefix = (digits) => [digits.slice(0, 2), digits.slice(2, 4), digits.slice(4, 6)]
+    .filter(Boolean).join("/");
+
+  function nativeInputSetter(input) {
+    const prototype = globalThis.HTMLInputElement?.prototype;
+    const setter = prototype && Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+    if (!setter) throw new Error("E-ZPass date input does not expose a native value setter.");
+    return setter;
+  }
+
+  function dispatchInputEvent(input, type, init = {}) {
+    let event;
+    try {
+      event = type === "input" || type === "beforeinput"
+        ? new InputEvent(type, { bubbles: true, cancelable: type === "beforeinput", ...init })
+        : type.startsWith("key")
+          ? new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init })
+          : new Event(type, { bubbles: true, ...init });
+    } catch {
+      event = new Event(type, { bubbles: true, cancelable: type === "beforeinput" });
     }
-    await portalAction(calendarDayControl(dialog, target), "calendar day selection");
-    await waitForDateCommit(input, identity, picker, iso, initialValue);
+    input.dispatchEvent(event);
+  }
+
+  function dateInputDiagnostics(input, identity) {
+    return JSON.stringify({
+      field: identity?.role || "unknown",
+      type: String(input?.getAttribute?.("type") || input?.type || "text").slice(0, 20),
+      format: /mm\/dd\/yy/i.test(input?.getAttribute?.("placeholder") || "") ? "MM/DD/YY" : "unknown",
+      digitCount: Math.min(8, normalizedDateDigits(input?.value).length),
+      valid: input?.checkValidity?.() !== false,
+      disabled: isDisabled(input),
+      readOnly: Boolean(input?.readOnly || input?.getAttribute?.("aria-readonly") === "true")
+    });
+  }
+
+  async function editDateInput(input, digits) {
+    if (typeof document.execCommand !== "function") return false;
+    input.focus?.();
+    input.select?.();
+    input.setSelectionRange?.(0, String(input.value || "").length);
+    try {
+      document.execCommand("delete", false);
+      for (const digit of digits) {
+        if (!document.execCommand("insertText", false, digit)) return false;
+        await Promise.resolve();
+      }
+      return true;
+    } catch { return false; }
+  }
+
+  function clearDateInput(input, setter) {
+    input.focus?.();
+    input.setSelectionRange?.(0, String(input.value || "").length);
+    dispatchInputEvent(input, "beforeinput", { inputType: "deleteContentBackward", data: null });
+    setter.call(input, "");
+    dispatchInputEvent(input, "input", { inputType: "deleteContentBackward", data: null });
+  }
+
+  async function commitDateInput(input, iso) {
+    if (inputDate(input.value) === iso && input.checkValidity?.() !== false) return input;
+    const identity = dateInputIdentity(input);
+    const digits = normalizedDateDigits(portalDate(iso));
+    if (isDisabled(input) || input.readOnly || input.getAttribute?.("aria-readonly") === "true") {
+      throw new Error(`E-ZPass date input is not editable. Diagnostics: ${dateInputDiagnostics(input, identity)}`);
+    }
+    await continueActiveSessionIfNeeded();
+    let candidate = input;
+    let edited = await editDateInput(candidate, digits);
+    candidate = reacquireDateInput(identity) || candidate;
+    if (!edited || normalizedDateDigits(candidate.value) !== digits) {
+      const setter = nativeInputSetter(candidate);
+      clearDateInput(candidate, setter);
+      let typedDigits = "";
+      for (const digit of digits) {
+        dispatchInputEvent(candidate, "keydown", { key: digit, code: `Digit${digit}` });
+        dispatchInputEvent(candidate, "keypress", { key: digit, code: `Digit${digit}` });
+        dispatchInputEvent(candidate, "beforeinput", { inputType: "insertText", data: digit });
+        typedDigits += digit;
+        setter.call(candidate, maskedDatePrefix(typedDigits));
+        dispatchInputEvent(candidate, "input", { inputType: "insertText", data: digit });
+        dispatchInputEvent(candidate, "keyup", { key: digit, code: `Digit${digit}` });
+        await Promise.resolve();
+        candidate = reacquireDateInput(identity) || candidate;
+      }
+    }
+    dispatchInputEvent(candidate, "change");
+    candidate.blur?.();
+    const end = Date.now() + 2500;
+    while (Date.now() < end) {
+      assertRoute("typed date confirmation");
+      await continueActiveSessionIfNeeded();
+      candidate = reacquireDateInput(identity) || candidate;
+      if (inputDate(candidate.value) === iso && candidate.checkValidity?.() !== false) return candidate;
+      await sleep(100);
+    }
+    throw new Error(`E-ZPass rejected a typed date. Diagnostics: ${dateInputDiagnostics(candidate, identity)}`);
   }
 
   const compactText = (value) => String(value || "").replace(/\s+/g, " ").trim();
@@ -677,9 +597,11 @@
     assertRoute("trip filter setup");
     await ensureFilterOpen();
     const inputs = visibleDateInputs();
-    const filters = transactionFilterControls(inputs);
-    await setCalendarDate(inputs[0], query.startDate);
-    await setCalendarDate(inputs[1], query.endDate);
+    const endIdentity = dateInputIdentity(inputs[1]);
+    await commitDateInput(inputs[0], query.startDate);
+    await sleep(100);
+    await commitDateInput(reacquireDateInput(endIdentity) || inputs[1], query.endDate);
+    const filters = transactionFilterControls(visibleDateInputs());
     await selectCombo(filters.type, (value) => /^toll$/i.test(value), "Toll type");
     const expected = String(query.canonicalIdentifier || "");
     await selectCombo(filters.identifier, (value) => portalCanonical(query.kind, value) === expected,
@@ -709,9 +631,11 @@
     await sleep(150);
     if (!snapshot.startDate || !snapshot.endDate) { await restoreViewSize(snapshot.view); return; }
     const inputs = visibleDateInputs();
-    const filters = transactionFilterControls(inputs);
-    await setCalendarDate(inputs[0], snapshot.startDate);
-    await setCalendarDate(inputs[1], snapshot.endDate);
+    const endIdentity = dateInputIdentity(inputs[1]);
+    await commitDateInput(inputs[0], snapshot.startDate);
+    await sleep(100);
+    await commitDateInput(reacquireDateInput(endIdentity) || inputs[1], snapshot.endDate);
+    const filters = transactionFilterControls(visibleDateInputs());
     if (snapshot.type && !/^all$/i.test(snapshot.type)) await selectCombo(filters.type, (value) => value === snapshot.type, "restored Type");
     if (snapshot.identifier && !/^all tags$/i.test(snapshot.identifier)) {
       await selectCombo(filters.identifier, (value) => value === snapshot.identifier, "restored tag/plate");
@@ -818,8 +742,7 @@
     testing: Object.freeze({ hasActivePortalFilters, hasDescendingTransactionSort, localTimestampKey, pageChronology,
       paginationRoot, activePageNumber, nextControl, previousControl, maximizePageSize, rewindToFirstPage, assertRoute,
       normalizedDateInputText, inputDate, dateInputRole, visibleDateInputs, reacquireDateInput,
-      dialogMonth, timestampDate, calendarDayControl, calendarDialogStructure, calendarDialogState,
-      waitForCalendarDialog, waitForCalendarMonth, waitForDateCommit, setCalendarDate,
+      portalDate, normalizedDateDigits, maskedDatePrefix, dateInputDiagnostics, commitDateInput,
       sessionExpiryDialogs, continueActiveSessionIfNeeded,
       accessibleControlName, namedCombos, transactionFilterControls,
       snapshotFilters, applyQuery, restoreFilters }),

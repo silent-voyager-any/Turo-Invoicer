@@ -3,10 +3,19 @@ import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
 
+class TestInputElement {
+  constructor() { this._value = ""; }
+  get value() { return this._value; }
+  set value(value) { this._value = String(value); }
+}
+class TestEvent {
+  constructor(type, init = {}) { this.type = type; Object.assign(this, init); }
+}
 const context = vm.createContext({
   Date, URL, location: { href: "https://www.e-zpassny.com/ezpass/dashboard/transactions" },
   document: { querySelectorAll: () => [], querySelector: () => null, body: { textContent: "" } },
-  setTimeout, clearTimeout
+  HTMLInputElement: TestInputElement, Event: TestEvent, InputEvent: TestEvent,
+  KeyboardEvent: TestEvent, MouseEvent: TestEvent, setTimeout, clearTimeout
 });
 vm.runInContext(readFileSync("ezpass_collection.js", "utf8"), context);
 const api = context.EzpassCollection;
@@ -36,7 +45,7 @@ test("normalizes portal timestamps into sortable local keys", () => {
   assert.equal(api.testing.localTimestampKey("09/05/2026 13:11 PM"), null);
 });
 
-test("normalizes only allowlisted direction marks in calendar input values", () => {
+test("normalizes only allowlisted direction marks in masked date input values", () => {
   for (const mark of ["\u200e", "\u200f", "\u202a", "\u202b", "\u202c", "\u202d", "\u202e",
     "\u2066", "\u2067", "\u2068", "\u2069"]) {
     assert.equal(api.testing.inputDate(`9${mark}/1${mark}/26`), "2026-09-01");
@@ -135,126 +144,97 @@ test("distinguishes duplicate and missing labelled filter controls", () => {
   assert.throws(() => api.testing.transactionFilterControls([fixture.start, fixture.end]), /Tag\/Plate # filter was not found/);
 });
 
-const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August",
-  "September", "October", "November", "December"];
-
-function calendarFixture({ year = 2026, month = 9, delayMs = 180, stall = false, skip = false,
-  replaceInput = false, bidiMarks = false, commitDelayMs = 0, acceptedDayOffset = 0,
-  extraDialogs = [] } = {}) {
-  let shown = { year, month };
-  let dialog = null;
-  let open = false;
-  let dialogBuilds = 0;
-  let navClicks = 0;
-  const localTimestamp = (day) => new Date(shown.year, shown.month - 1, day).getTime();
-  const formattedInput = (day) => bidiMarks ? `${shown.month}\u200e/${day}\u200e/${String(shown.year).slice(-2)}` :
-    `${String(shown.month).padStart(2, "0")}/${String(day).padStart(2, "0")}/${String(shown.year).slice(-2)}`;
-  const startLabel = { textContent: "Start Date" }, endLabel = { textContent: "End Date" };
-  let input = visibleElement({ value: "", labels: [startLabel] });
-  const initialInput = input;
-  const endInput = visibleElement({ value: "", labels: [endLabel] });
-  const main = { querySelectorAll: (selector) => selector === "input" ? [input, endInput] : [] };
-
-  const buildDialog = () => {
-    dialogBuilds += 1;
-    const heading = { textContent: `${MONTHS[shown.month - 1]} ${shown.year}`, getAttribute: () => null };
-    const shift = (direction) => {
-      navClicks += 1;
-      if (stall) return;
-      setTimeout(() => {
-        const date = new Date(Date.UTC(shown.year, shown.month - 1 + direction * (skip ? 2 : 1), 1));
-        shown = { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1 };
-        dialog = buildDialog();
-      }, delayMs);
-    };
-    const navigation = (ariaLabel, direction) => visibleElement({ textContent: "",
-      attributes: { "aria-label": ariaLabel }, click: () => shift(direction) });
-    const days = Array.from({ length: new Date(Date.UTC(shown.year, shown.month, 0)).getUTCDate() }, (_, index) => {
-      const day = index + 1;
-      return visibleElement({ textContent: String(day), attributes: { role: "gridcell", "data-timestamp": String(localTimestamp(day)) },
-        click: () => {
-          const commit = () => {
-            const acceptedDay = day + acceptedDayOffset;
-            if (replaceInput) {
-              input = visibleElement({ value: formattedInput(acceptedDay), labels: [startLabel], parentElement: field });
-            } else input.value = formattedInput(acceptedDay);
-            open = false;
-          };
-          if (commitDelayMs) setTimeout(commit, commitDelayMs); else commit();
-        } });
-    });
-    const controls = [navigation("Previous month", -1), navigation("Next month", 1), ...days];
-    return visibleElement({ attributes: { "aria-label": "Start Date" },
-      querySelectorAll(selector) {
-        if (selector === "*") return [heading, ...days];
-        if (selector === '[role="gridcell"][data-timestamp], [data-timestamp][role="gridcell"]') return days;
-        if (selector === "button, [role='button'], input[type='submit'], input[type='button']" ||
-            selector === 'button, [role="button"], [role="gridcell"], [data-timestamp]') return controls;
-        return [];
+function typedDateFixture({ execCommand = true, replaceInput = false, readOnly = false, disabled = false,
+  rejectValue = false, invalid = false } = {}) {
+  let active = null, calendarClicks = 0;
+  const makeInput = (role) => {
+    const input = new TestInputElement();
+    Object.assign(input, visibleElement({ labels: [{ textContent: `${role} Date` }], events: [], readOnly, disabled,
+      attributes: { placeholder: "MM/DD/YY" },
+      focus() { active = this; }, select() {}, setSelectionRange() {}, blur() {}, checkValidity: () => !invalid,
+      dispatchEvent(event) {
+        this.events.push(event);
+        if (replaceInput && role === "Start" && event.type === "input" && !inputs.replaced) {
+          const replacement = makeInput(role);
+          replacement.value = this.value;
+          inputs[0] = replacement;
+          inputs.replaced = true;
+          active = replacement;
+        }
+        return true;
       }
-    });
+    }));
+    return input;
   };
-  const picker = visibleElement({ textContent: "Choose date", click: () => { open = true; dialog = buildDialog(); } });
-  const field = {
-    parentElement: main,
-    querySelectorAll: (selector) => selector === "button, [role='button'], input[type='submit'], input[type='button']" ? [picker] : []
-  };
-  input.parentElement = field;
-  endInput.parentElement = field;
+  const inputs = [makeInput("Start"), makeInput("End")];
+  const calendar = visibleElement({ textContent: "Choose date", click() { calendarClicks += 1; } });
+  const main = { querySelectorAll: (selector) => selector === "input" ? inputs :
+    selector === "button, [role='button'], input[type='submit'], input[type='button']" ? [calendar] : [] };
   context.document = {
     body: { textContent: "" },
     querySelector: (selector) => selector === "main, [role='main']" ? main : null,
-    querySelectorAll: (selector) => selector === '[role="dialog"]' ? [...(open ? [dialog] : []), ...extraDialogs] : []
+    querySelectorAll: (selector) => main.querySelectorAll(selector)
   };
-  return { initialInput, get input() { return input; }, get dialogBuilds() { return dialogBuilds; }, get navClicks() { return navClicks; } };
+  if (execCommand) {
+    context.document.execCommand = (command, _ui, value) => {
+      if (command === "delete") { active.value = ""; return true; }
+      if (command !== "insertText") return false;
+      const digits = `${api.testing.normalizedDateDigits(active.value)}${value}`;
+      if (!rejectValue) active.value = api.testing.maskedDatePrefix(digits);
+      return true;
+    };
+  }
+  return { inputs, get calendarClicks() { return calendarClicks; } };
 }
 
-test("calendar waits for delayed month hydration and reacquires replaced dialogs", async () => {
+test("types an exact masked date through Chromium editing without opening the calendar", async () => {
   context.location.href = "https://www.e-zpassny.com/ezpass/dashboard/transactions";
-  const fixture = calendarFixture({ month: 9, delayMs: 180 });
-  await api.testing.setCalendarDate(fixture.input, "2026-07-31");
-  assert.equal(fixture.input.value, "07/31/26");
-  assert.equal(fixture.navClicks, 2);
-  assert.ok(fixture.dialogBuilds >= 3);
+  const fixture = typedDateFixture();
+  fixture.inputs[0].value = "01/01/25";
+  await api.testing.commitDateInput(fixture.inputs[0], "2026-08-01");
+  assert.equal(fixture.inputs[0].value, "08/01/26");
+  assert.equal(fixture.calendarClicks, 0);
 });
 
-test("calendar accepts marked values from a delayed replacement input", async () => {
-  const fixture = calendarFixture({ month: 9, replaceInput: true, bidiMarks: true, commitDelayMs: 180 });
-  await api.testing.setCalendarDate(fixture.input, "2026-09-01");
-  assert.notEqual(fixture.input, fixture.initialInput);
-  assert.equal(api.testing.inputDate(fixture.input.value), "2026-09-01");
-  assert.equal(fixture.input.value, "9\u200e/1\u200e/26");
+test("native input fallback emits typing events and reacquires a replaced input", async () => {
+  const fixture = typedDateFixture({ execCommand: false, replaceInput: true });
+  const original = fixture.inputs[0];
+  const accepted = await api.testing.commitDateInput(original, "2026-08-01");
+  assert.notEqual(accepted, original);
+  assert.equal(accepted.value, "08/01/26");
+  assert.ok(original.events.some((event) => event.type === "beforeinput"));
+  assert.ok(accepted.events.some((event) => event.type === "keyup"));
+  assert.equal(fixture.calendarClicks, 0);
 });
 
-test("calendar ignores a simultaneous non-calendar session dialog", async () => {
-  const sessionDialog = visibleElement({ textContent: "Session will expire soon You will be automatically logged out",
-    querySelectorAll: () => [] });
-  const fixture = calendarFixture({ month: 9, extraDialogs: [sessionDialog] });
-  await api.testing.setCalendarDate(fixture.input, "2026-09-01");
-  assert.equal(fixture.input.value, "09/01/26");
+test("typing both masked dates supplies the events that enable portal Search", async () => {
+  const fixture = typedDateFixture({ execCommand: false });
+  let searchEnabled = false;
+  for (const input of fixture.inputs) {
+    const dispatch = input.dispatchEvent.bind(input);
+    input.dispatchEvent = (event) => {
+      const result = dispatch(event);
+      if (event.type === "keyup" && fixture.inputs.every((field) =>
+        api.testing.normalizedDateDigits(field.value).length === 6)) searchEnabled = true;
+      return result;
+    };
+  }
+  await api.testing.commitDateInput(fixture.inputs[0], "2026-08-01");
+  assert.equal(searchEnabled, false);
+  await api.testing.commitDateInput(fixture.inputs[1], "2026-08-14");
+  assert.equal(searchEnabled, true);
 });
 
-test("calendar resolver binds Start Date, ignores End Date, and rejects duplicate targets", async () => {
-  const fixture = calendarFixture({ month: 9 });
-  const start = fixture.initialInput;
-  const picker = start.parentElement.querySelectorAll("button, [role='button'], input[type='submit'], input[type='button']")[0];
-  picker.click();
-  const startDialog = context.document.querySelectorAll('[role="dialog"]')[0];
-  const endDialog = visibleElement({ attributes: { "aria-label": "End Date" },
-    querySelectorAll: (selector) => startDialog.querySelectorAll(selector) });
-  const original = context.document.querySelectorAll;
-  context.document.querySelectorAll = (selector) => selector === '[role="dialog"]' ? [startDialog, endDialog] : original(selector);
-  const state = api.testing.calendarDialogState({ role: "start", index: 0 }, start, picker);
-  assert.equal(state.calendars.length, 2);
-  assert.equal(state.target.length, 1);
-  assert.equal(state.target[0].dialog, startDialog);
-
-  const duplicateStart = visibleElement({ attributes: { "aria-label": "Start Date" },
-    querySelectorAll: (selector) => startDialog.querySelectorAll(selector) });
-  context.document.querySelectorAll = (selector) => selector === '[role="dialog"]' ?
-    [startDialog, endDialog, duplicateStart] : original(selector);
-  await assert.rejects(api.testing.waitForCalendarDialog({ role: "start", index: 0 }, start, picker, null, 150),
-    /start date calendar was missing or ambiguous.*target=2/);
+test("typed dates accept safe formatting marks but reject uneditable or rejected fields", async () => {
+  let fixture = typedDateFixture();
+  fixture.inputs[0].value = "8\u200e/1\u200e/26";
+  assert.equal(await api.testing.commitDateInput(fixture.inputs[0], "2026-08-01"), fixture.inputs[0]);
+  fixture = typedDateFixture({ readOnly: true });
+  await assert.rejects(api.testing.commitDateInput(fixture.inputs[0], "2026-08-01"), /not editable.*readOnly/);
+  fixture = typedDateFixture({ disabled: true });
+  await assert.rejects(api.testing.commitDateInput(fixture.inputs[0], "2026-08-01"), /not editable.*disabled/);
+  fixture = typedDateFixture({ rejectValue: true, invalid: true });
+  await assert.rejects(api.testing.commitDateInput(fixture.inputs[0], "2026-08-01"), /rejected a typed date.*digitCount/);
 });
 
 test("continues only the exact E-ZPass session-expiry dialog action", async () => {
@@ -284,38 +264,6 @@ test("session continuation is sync-scoped and rejects ambiguous actions", async 
   };
   assert.equal(await api.testing.continueActiveSessionIfNeeded(), false);
   await assert.rejects(api.testing.continueActiveSessionIfNeeded(true), /ambiguous Continue working/);
-});
-
-test("calendar rejects a different committed date", async () => {
-  const fixture = calendarFixture({ month: 9, acceptedDayOffset: 1 });
-  await assert.rejects(api.testing.setCalendarDate(fixture.input, "2026-09-01"), /accepted a different calendar date/);
-});
-
-test("calendar day selection uses the complete timestamp-backed date", () => {
-  const day = (year, month, date) => visibleElement({ textContent: String(date),
-    attributes: { role: "gridcell", "data-timestamp": String(new Date(year, month - 1, date).getTime()) } });
-  const correct = day(2026, 7, 31), adjacent = day(2026, 8, 31);
-  const heading = { textContent: "July 2026", getAttribute: () => null };
-  const dialog = { querySelectorAll: (selector) => selector === "*" ? [heading, correct, adjacent] : [correct, adjacent] };
-  assert.equal(api.testing.calendarDayControl(dialog, { year: 2026, month: 7, day: 31 }), correct);
-
-  const duplicate = day(2026, 7, 31);
-  const ambiguous = { querySelectorAll: (selector) => selector === "*" ? [heading, correct, duplicate] : [correct, duplicate] };
-  assert.throws(() => api.testing.calendarDayControl(ambiguous, { year: 2026, month: 7, day: 31 }), /multiple matching full-date/);
-
-  const missing = { querySelectorAll: (selector) => selector === "*" ? [heading, adjacent] : [adjacent] };
-  assert.throws(() => api.testing.calendarDayControl(missing, { year: 2026, month: 7, day: 31 }), /full-date.*not found/);
-
-  const fallbackDay = visibleElement({ textContent: "31" });
-  const fallback = { querySelectorAll: (selector) => selector === "*" ? [heading, fallbackDay] : [fallbackDay] };
-  assert.equal(api.testing.calendarDayControl(fallback, { year: 2026, month: 7, day: 31 }), fallbackDay);
-});
-
-test("calendar navigation rejects skipped and stalled months", async () => {
-  let fixture = calendarFixture({ month: 9, delayMs: 20, skip: true });
-  await assert.rejects(api.testing.setCalendarDate(fixture.input, "2026-08-30"), /skipped the expected month/);
-  fixture = calendarFixture({ month: 9, stall: true });
-  await assert.rejects(api.testing.setCalendarDate(fixture.input, "2026-08-30"), /navigation stalled/);
 });
 
 test("proves descending page chronology and rejects boundary reversals", () => {

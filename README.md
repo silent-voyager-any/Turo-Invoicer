@@ -4,7 +4,7 @@ A local-first Chrome extension that helps Turo hosts reconcile NY E-ZPass toll a
 
 The extension observes data loaded in your signed-in browser tabs, matches toll timestamps to trip intervals, and presents suggestions for review. It does not require a server, store portal passwords, or submit reimbursement claims.
 
-> **Status: evidence-ready personal release, version 0.5.4.** The extension verifies Turo trips, searches E-ZPass per trip and exact confirmed identifier, groups matches, captures visible evidence locally, and requires individual plus immutable batch approval. Reimbursement submission remains disabled pending verified upload fixtures.
+> **Status: evidence-ready personal release, version 0.5.5.** The extension verifies Turo trips, searches E-ZPass per trip and exact confirmed identifier, groups matches, captures visible evidence locally, and requires individual plus immutable batch approval. Reimbursement submission remains disabled pending verified upload fixtures.
 
 ## Features
 
@@ -19,7 +19,11 @@ The extension observes data loaded in your signed-in browser tabs, matches toll 
 - Local snapshots, atomic two-source sync, and a clear-data control.
 - No backend uploads, analytics, remote scripts, or automatic claim submission.
 
-## Version 0.5.4 update
+## Version 0.5.5 update
+
+E-ZPass trip searches now type each Start and End date directly into the portal's masked `MM/DD/YY` fields. The collector verifies the exact accepted date and never opens or depends on the calendar widget.
+
+Version 0.5.4 added session-dialog handling:
 
 E-ZPass calendar selection now distinguishes real date-picker dialogs from unrelated portal dialogs. During a user-started sync, the collector safely selects the unique **continue working** action in the verified session-expiry dialog and resumes without confusing that modal for a second calendar.
 

@@ -21,7 +21,7 @@ Detail bodies must have a JSON content type and remain within the two-million-by
 | `https://www.e-zpassny.com/*` | Inject collectors and query/message the NY portal tab |
 | `https://e-zpassny.com/*` | Support the portal's apex hostname |
 
-No `cookies`, `webRequest`, `tabs`, `scripting`, `offscreen`, `declarativeNetRequest`, `unlimitedStorage`, or all-sites permission is declared. `activeTab` is used only after the user opens the popup on the visible E-ZPass Transactions tab; `alarms` removes sent evidence after its retention deadline. Static scripts and matching-tab access use the two portal host permissions. Version 0.5.4 binds each screenshot request to a short-lived in-memory token and the exact active transaction tab. Its E-ZPass session continuation is limited to the verified timeout dialog during an explicit collection and does not run as a background keep-alive. PNG blobs stay in IndexedDB; only hashes and reduced metadata enter extension storage.
+No `cookies`, `webRequest`, `tabs`, `scripting`, `offscreen`, `declarativeNetRequest`, `unlimitedStorage`, or all-sites permission is declared. `activeTab` is used only after the user opens the popup on the visible E-ZPass Transactions tab; `alarms` removes sent evidence after its retention deadline. Static scripts and matching-tab access use the two portal host permissions. Version 0.5.5 binds each screenshot request to a short-lived in-memory token and the exact active transaction tab. Its E-ZPass session continuation is limited to the verified timeout dialog during an explicit collection and does not run as a background keep-alive. PNG blobs stay in IndexedDB; only hashes and reduced metadata enter extension storage.
 
 ## Trust boundaries
 

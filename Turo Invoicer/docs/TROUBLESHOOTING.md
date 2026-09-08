@@ -53,6 +53,8 @@ Network records take precedence over DOM records. Stale partial network capture 
 
 ## E-ZPass filters and manual tags
 
+Version 0.5.5 does not operate the E-ZPass calendar. It enters six digits directly into each masked `MM/DD/YY` field, lets the portal insert separators, and verifies that the accepted value exactly matches the requested trip date. A disabled, read-only, incomplete, different, or invalid value fails safely with diagnostics that never include the date itself.
+
 Version 0.5.4 identifies a date picker by its month heading, navigation controls, timestamp-backed day grid, and relationship to the requested Start or End Date field. Other visible dialogs are ignored. The live portal can show a session-expiry warning while a calendar remains open; during an explicit sync, the collector clicks only the unique enabled **continue working** action inside that verified warning and then rechecks the transactions route. Ambiguous warnings, failed dismissal, logout, or a route change fail safely and preserve prior results.
 
 Version 0.5.3 recognizes the invisible Unicode direction marks inserted by the live E-ZPass date component and reacquires a Start or End input if React replaces it after selection. Only the portal's allowlisted direction-formatting characters are removed; malformed dates and unrelated invisible characters still fail closed.
