@@ -63,7 +63,7 @@ After history collection, the worker opens one temporary inactive Turo tab and c
 
 Skeletons alone do not satisfy the wait. Structural completeness does not imply valid dates; the reconciler performs timestamp validation later. Route changes clear captures and cancel pending waits.
 
-Version 0.5.0 builds one E-ZPass search per eligible trip and active confirmed identifier. The content script uses the portal calendar picker, exact Toll and tag/plate options, follows every filtered page, and treats View 100 as optional. It restores the original filters in `finally`. `Lane Txn ID` deduplicates tolls; any failed query, restoration, repeated page, route change, or timeout preserves the prior complete snapshot.
+Version 0.5.1 builds one E-ZPass search per eligible trip and active confirmed identifier. The content script locates the transaction filter through the date inputs and accessible Type and Tag/Plate labels, uses the portal calendar picker, selects exact Toll and tag/plate options, follows every filtered page, and treats View 100 as optional. It restores the original filters in `finally`. `Lane Txn ID` deduplicates tolls; any failed query, restoration, repeated page, route change, or timeout preserves the prior complete snapshot.
 
 ## Dashboard and fleet state
 

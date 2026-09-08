@@ -36,6 +36,89 @@ test("normalizes portal timestamps into sortable local keys", () => {
   assert.equal(api.testing.localTimestampKey("09/05/2026 13:11 PM"), null);
 });
 
+const visibleElement = (properties = {}) => ({
+  hidden: false,
+  get offsetParent() { return {}; },
+  getClientRects: () => ({ length: 1 }),
+  getAttribute(name) { return this.attributes?.[name] ?? null; },
+  ...properties
+});
+
+function labelledFilterFixture({ duplicateType = false, omitType = false, omitIdentifier = false } = {}) {
+  const label = (textContent, htmlFor = "") => ({ textContent, htmlFor });
+  const startLabel = label("Start Date"), endLabel = label("End Date");
+  const typeLabel = label("Type", "type-control"), identifierLabel = label("Tag/Plate #", "identifier-control");
+  const start = visibleElement({ value: "08/01/26", labels: [startLabel] });
+  const end = visibleElement({ value: "08/02/26", labels: [endLabel] });
+  const type = visibleElement({ id: "type-control", value: "All", labels: [typeLabel] });
+  const identifier = visibleElement({ id: "identifier-control", value: "All tags", labels: [identifierLabel] });
+  const view = visibleElement({ textContent: "10", attributes: { "aria-label": "View" } });
+  const hiddenType = visibleElement({ id: "hidden-type", labels: [typeLabel], hidden: true, offsetParent: null,
+    getClientRects: () => ({ length: 0 }) });
+  const secondType = visibleElement({ id: "second-type", labels: [typeLabel] });
+  const search = visibleElement({ textContent: "Search" });
+  const combos = [...(omitType ? [] : [type]), ...(duplicateType ? [secondType] : []),
+    ...(omitIdentifier ? [] : [identifier]), view, hiddenType];
+  const root = {
+    parentElement: null,
+    contains: (node) => [start, end, ...combos, search].includes(node),
+    querySelectorAll(selector) {
+      if (selector === '[role="combobox"]') return combos;
+      if (selector === "button, [role='button'], input[type='submit'], input[type='button']") return [search];
+      if (selector === "input") return [start, end, type, identifier];
+      if (selector === '[role="combobox"][aria-label="View"]') return [view];
+      return [];
+    }
+  };
+  start.parentElement = root;
+  end.parentElement = root;
+  const labels = [startLabel, endLabel, typeLabel, identifierLabel];
+  context.document = {
+    body: { textContent: "" },
+    querySelector: (selector) => selector === "main, [role='main']" ? root : null,
+    querySelectorAll: (selector) => selector === "label" ? labels : root.querySelectorAll(selector),
+    getElementById: () => null
+  };
+  return { start, end, type, identifier, view, root };
+}
+
+test("resolves combobox names from standard accessible label relationships", () => {
+  const native = visibleElement({ labels: [{ textContent: "Type" }] });
+  assert.equal(api.testing.accessibleControlName(native), "Type");
+
+  context.document = { ...context.document, getElementById: (id) => id === "tag-label" ? { textContent: "Tag/Plate #" } : null };
+  const labelledBy = visibleElement({ attributes: { "aria-labelledby": "tag-label" } });
+  assert.equal(api.testing.accessibleControlName(labelledBy), "Tag/Plate #");
+
+  const direct = visibleElement({ attributes: { "aria-label": "View", "aria-labelledby": "tag-label" } });
+  assert.equal(api.testing.accessibleControlName(direct), "View");
+
+  context.document = { ...context.document,
+    querySelectorAll: (selector) => selector === "label" ? [{ htmlFor: "legacy-type", textContent: "Type" }] : [] };
+  const labelFor = visibleElement({ id: "legacy-type", labels: [] });
+  assert.equal(api.testing.accessibleControlName(labelFor), "Type");
+});
+
+test("scopes Type and Tag/Plate controls to their shared transaction filter", () => {
+  const fixture = labelledFilterFixture();
+  const filters = api.testing.transactionFilterControls([fixture.start, fixture.end]);
+  assert.equal(filters.type, fixture.type);
+  assert.equal(filters.identifier, fixture.identifier);
+  assert.notEqual(filters.type, fixture.view);
+  assert.deepEqual(clone(api.testing.snapshotFilters()), {
+    startDate: "2026-08-01", endDate: "2026-08-02", type: "All", identifier: "All tags", view: "10"
+  });
+});
+
+test("distinguishes duplicate and missing labelled filter controls", () => {
+  let fixture = labelledFilterFixture({ duplicateType: true });
+  assert.throws(() => api.testing.transactionFilterControls([fixture.start, fixture.end]), /multiple Type controls/);
+  fixture = labelledFilterFixture({ omitType: true });
+  assert.throws(() => api.testing.transactionFilterControls([fixture.start, fixture.end]), /Type filter was not found/);
+  fixture = labelledFilterFixture({ omitIdentifier: true });
+  assert.throws(() => api.testing.transactionFilterControls([fixture.start, fixture.end]), /Tag\/Plate # filter was not found/);
+});
+
 test("proves descending page chronology and rejects boundary reversals", () => {
   const first = api.testing.pageChronology({ raw: [
     { timestamp: "09/05/2026 1:00 PM" }, { timestamp: "09/04/2026 1:00 PM" }

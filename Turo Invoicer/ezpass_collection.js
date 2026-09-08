@@ -373,11 +373,64 @@
     await waitFor(() => inputDate(input.value) === iso, 2000, "E-ZPass did not accept a calendar date.");
   }
 
-  function labelledCombo(label) {
-    const matches = controls(transactionMain(), '[role="combobox"]')
-      .filter((node) => isVisible(node) && new RegExp(`^${label}$`, "i").test(String(node.getAttribute?.("aria-label") || "")));
-    if (matches.length !== 1) throw new Error(`E-ZPass ${label} filter is missing or ambiguous.`);
-    return matches[0];
+  const compactText = (value) => String(value || "").replace(/\s+/g, " ").trim();
+
+  // E-ZPass currently names its Type and Tag/Plate combobox inputs with
+  // native <label for="..."> elements. Keep the full accessible-name order
+  // so minor framework markup changes do not force us back to CSS classes.
+  function accessibleControlName(node) {
+    const direct = compactText(node?.getAttribute?.("aria-label"));
+    if (direct) return direct;
+
+    const labelledBy = compactText(node?.getAttribute?.("aria-labelledby"));
+    if (labelledBy) {
+      const text = labelledBy.split(/\s+/).map((id) =>
+        compactText(document.getElementById?.(id)?.textContent)).filter(Boolean).join(" ");
+      if (text) return text;
+    }
+
+    const native = [...(node?.labels || [])].map((label) => compactText(label?.textContent)).filter(Boolean).join(" ");
+    if (native) return native;
+
+    const id = String(node?.id || "");
+    if (id) {
+      const text = controls(document, "label").filter((label) => String(label?.htmlFor || "") === id)
+        .map((label) => compactText(label?.textContent)).filter(Boolean).join(" ");
+      if (text) return text;
+    }
+    return "";
+  }
+
+  const namedCombos = (root, label) => controls(root, '[role="combobox"]').filter((node) =>
+    isVisible(node) && accessibleControlName(node).toLowerCase() === String(label).toLowerCase());
+
+  function transactionFilterControls(inputs = visibleDateInputs()) {
+    const boundary = transactionMain();
+    let root = inputs[0]?.parentElement;
+    let maxType = 0, maxIdentifier = 0, maxSearch = 0;
+    while (root) {
+      if (root.contains?.(inputs[1])) {
+        const type = namedCombos(root, "Type");
+        const identifier = namedCombos(root, "Tag/Plate #");
+        const search = buttons(root).filter((node) => isVisible(node) && /^search$/i.test(normalizedText(node)));
+        maxType = Math.max(maxType, type.length);
+        maxIdentifier = Math.max(maxIdentifier, identifier.length);
+        maxSearch = Math.max(maxSearch, search.length);
+        if (type.length === 1 && identifier.length === 1 && search.length === 1) {
+          return { root, type: type[0], identifier: identifier[0], search: search[0] };
+        }
+      }
+      if (root === boundary || root === document.body) break;
+      root = root.parentElement;
+    }
+
+    if (!maxType) throw new Error("E-ZPass Type filter was not found in the transaction filter panel.");
+    if (maxType > 1) throw new Error("E-ZPass transaction filter contains multiple Type controls.");
+    if (!maxIdentifier) throw new Error("E-ZPass Tag/Plate # filter was not found in the transaction filter panel.");
+    if (maxIdentifier > 1) throw new Error("E-ZPass transaction filter contains multiple Tag/Plate # controls.");
+    if (!maxSearch) throw new Error("E-ZPass transaction-filter Search control was not found.");
+    if (maxSearch > 1) throw new Error("E-ZPass transaction filter contains multiple Search controls.");
+    throw new Error("E-ZPass transaction filter controls do not share a supported container.");
   }
 
   async function selectCombo(combo, matcher, label) {
@@ -391,19 +444,6 @@
     await sleep(80);
   }
 
-  function filterSearch(inputs) {
-    let root = inputs[0].parentElement;
-    while (root && root !== document.body) {
-      if (root.contains(inputs[1])) {
-        const matches = buttons(root).filter((node) => isVisible(node) && /^search$/i.test(normalizedText(node)));
-        if (matches.length === 1) return matches[0];
-        if (matches.length > 1) throw new Error("E-ZPass transaction filter contains multiple Search controls.");
-      }
-      root = root.parentElement;
-    }
-    throw new Error("E-ZPass transaction-filter Search control was not found.");
-  }
-
   function clearFilterButton() {
     const matches = buttons(transactionMain()).filter((node) => isVisible(node) && /^clear all$/i.test(normalizedText(node)));
     if (matches.length !== 1) throw new Error("E-ZPass Clear All control is missing or ambiguous.");
@@ -412,9 +452,12 @@
 
   function snapshotFilters() {
     const inputs = visibleDateInputs();
-    const type = labelledCombo("Type"), identifier = labelledCombo("Tag/Plate #"), view = controls(transactionMain(), '[role="combobox"][aria-label="View"]').filter(isVisible)[0];
+    const filters = transactionFilterControls(inputs);
+    const view = controls(transactionMain(), '[role="combobox"][aria-label="View"]').filter(isVisible)[0];
     return { startDate: inputDate(inputs[0].value), endDate: inputDate(inputs[1].value),
-      type: normalizedText(type), identifier: normalizedText(identifier), view: view ? normalizedText(view) : null };
+      type: compactText(filters.type.value) || normalizedText(filters.type),
+      identifier: compactText(filters.identifier.value) || normalizedText(filters.identifier),
+      view: view ? normalizedText(view) : null };
   }
 
   async function restoreViewSize(value) {
@@ -429,13 +472,14 @@
     assertRoute("trip filter setup");
     await ensureFilterOpen();
     const inputs = visibleDateInputs();
+    const filters = transactionFilterControls(inputs);
     await setCalendarDate(inputs[0], query.startDate);
     await setCalendarDate(inputs[1], query.endDate);
-    await selectCombo(labelledCombo("Type"), (value) => /^toll$/i.test(value), "Toll type");
+    await selectCombo(filters.type, (value) => /^toll$/i.test(value), "Toll type");
     const expected = String(query.canonicalIdentifier || "");
-    await selectCombo(labelledCombo("Tag/Plate #"), (value) => portalCanonical(query.kind, value) === expected,
+    await selectCombo(filters.identifier, (value) => portalCanonical(query.kind, value) === expected,
       "exact tag/plate");
-    const search = filterSearch(inputs);
+    const search = filters.search;
     await waitFor(() => !isDisabled(search) && search, 5000, "E-ZPass Search remained disabled after applying trip filters.");
     search.click();
     assertRoute("trip filter search");
@@ -460,13 +504,14 @@
     await sleep(150);
     if (!snapshot.startDate || !snapshot.endDate) { await restoreViewSize(snapshot.view); return; }
     const inputs = visibleDateInputs();
+    const filters = transactionFilterControls(inputs);
     await setCalendarDate(inputs[0], snapshot.startDate);
     await setCalendarDate(inputs[1], snapshot.endDate);
-    if (snapshot.type && !/^all$/i.test(snapshot.type)) await selectCombo(labelledCombo("Type"), (value) => value === snapshot.type, "restored Type");
+    if (snapshot.type && !/^all$/i.test(snapshot.type)) await selectCombo(filters.type, (value) => value === snapshot.type, "restored Type");
     if (snapshot.identifier && !/^all tags$/i.test(snapshot.identifier)) {
-      await selectCombo(labelledCombo("Tag/Plate #"), (value) => value === snapshot.identifier, "restored tag/plate");
+      await selectCombo(filters.identifier, (value) => value === snapshot.identifier, "restored tag/plate");
     }
-    const search = filterSearch(inputs);
+    const search = filters.search;
     await waitFor(() => !isDisabled(search) && search, 5000, "E-ZPass Search remained disabled while restoring filters.");
     search.click();
     await sleep(350);
@@ -559,7 +604,8 @@
     validateRange, validateQueries, collect,
     testing: Object.freeze({ hasActivePortalFilters, hasDescendingTransactionSort, localTimestampKey, pageChronology,
       paginationRoot, activePageNumber, nextControl, previousControl, maximizePageSize, rewindToFirstPage, assertRoute,
-      inputDate, visibleDateInputs, snapshotFilters, applyQuery, restoreFilters }),
+      inputDate, visibleDateInputs, accessibleControlName, namedCombos, transactionFilterControls,
+      snapshotFilters, applyQuery, restoreFilters }),
     constants: Object.freeze({ MAX_TOTAL_PAGES })
   });
 })();

@@ -1,6 +1,6 @@
 # Project documentation
 
-This reference describes version 0.5.0: trip-first exact E-ZPass searches, schema-5 evidence and approval state, authenticated Turo status checks, local IndexedDB screenshots, and the four-page dashboard. Last reviewed: September 7, 2026.
+This reference describes version 0.5.1: trip-first exact E-ZPass searches, semantic E-ZPass filter detection, schema-5 evidence and approval state, authenticated Turo status checks, local IndexedDB screenshots, and the four-page dashboard. Last reviewed: September 8, 2026.
 
 ## Reading paths
 

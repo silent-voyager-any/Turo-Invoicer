@@ -53,6 +53,8 @@ Network records take precedence over DOM records. Stale partial network capture 
 
 ## E-ZPass filters and manual tags
 
+Version 0.5.1 resolves the transaction `Type` and `Tag/Plate #` comboboxes through their accessible labels. The live portal uses native `<label for>` relationships rather than `aria-label` attributes. If either control is reported missing or duplicated, reload the extension and transaction tab; the collector will not fall back to an unrelated page-size or header control.
+
 Version 0.4.7 does not use the E-ZPass date inputs or Search control. It rewinds the existing unfiltered list, selects View 100 when available, and follows the scoped accessible pager until it passes the oldest relevant trip under proven ordering or Next is disabled. The portal can briefly show “No transactions found” between pages; the collector waits for the requested current-page number and stable rows instead of treating that placeholder as final. Clear date, tag, and plate filters before syncing. Exit times with fractional seconds are supported and verified toll debits become positive charge amounts; credits and other non-toll activity are ignored.
 
 If collection reports an active portal filter, clear the visible E-ZPass date/tag/plate fields and reload the transactions page. If pagination stalls, do not manually change pages during sync; the extension preserves the previous complete snapshot. A stale injected script is detected explicitly and requires reloading the E-ZPass tab.
