@@ -299,24 +299,44 @@
     };
   }
 
+  const DATE_FORMATTING_MARKS = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+  const normalizedDateInputText = (value) => String(value || "").replace(DATE_FORMATTING_MARKS, "").trim();
   const inputDate = (value) => {
-    const match = String(value || "").trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+    const match = normalizedDateInputText(value).match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
     if (!match) return null;
     const year = match[3].length === 2 ? Number(`20${match[3]}`) : Number(match[3]);
     const candidate = `${year}-${String(Number(match[1])).padStart(2, "0")}-${String(Number(match[2])).padStart(2, "0")}`;
     return isoParts(candidate) ? candidate : null;
   };
 
+  const dateInputHint = (node) => [node?.getAttribute?.("aria-label"), node?.getAttribute?.("name"),
+    ...(node?.labels || [])].map((item) => normalizedText(item)).join(" ");
+  const dateInputRole = (node) => /start/i.test(dateInputHint(node)) ? "start" :
+    /end/i.test(dateInputHint(node)) ? "end" : null;
+
   function visibleDateInputs() {
     const inputs = controls(transactionMain(), "input").filter((node) => isVisible(node) &&
       /date|mm\/dd/i.test([node.getAttribute?.("aria-label"), node.getAttribute?.("placeholder"),
         node.getAttribute?.("name"), ...(node.labels || [])].map((item) => normalizedText(item)).join(" ")));
     if (inputs.length !== 2) throw new Error(`Expected exactly two visible E-ZPass date inputs; found ${inputs.length}.`);
-    const hint = (node) => [node.getAttribute?.("aria-label"), node.getAttribute?.("name"),
-      ...(node.labels || [])].map((item) => normalizedText(item)).join(" ");
-    const start = inputs.find((node) => /start/i.test(hint(node)));
-    const end = inputs.find((node) => /end/i.test(hint(node)));
+    const start = inputs.find((node) => dateInputRole(node) === "start");
+    const end = inputs.find((node) => dateInputRole(node) === "end");
     return start && end && start !== end ? [start, end] : inputs;
+  }
+
+  function dateInputIdentity(input) {
+    const role = dateInputRole(input);
+    if (role) return { role, index: role === "start" ? 0 : 1 };
+    const index = visibleDateInputs().indexOf(input);
+    if (index < 0) throw new Error("E-ZPass calendar target input could not be identified.");
+    return { role: null, index };
+  }
+
+  function reacquireDateInput(identity) {
+    let inputs;
+    try { inputs = visibleDateInputs(); } catch { return null; }
+    return identity.role ? inputs.find((node) => dateInputRole(node) === identity.role) || null :
+      inputs[identity.index] || null;
   }
 
   async function ensureFilterOpen() {
@@ -409,9 +429,37 @@
     }, 2500, `E-ZPass calendar month navigation stalled at ${monthLabel(previous)}.`);
   }
 
+  async function waitForDateCommit(original, identity, iso, initialValue = normalizedDateInputText(original?.value)) {
+    const end = Date.now() + 2500;
+    let dialogClosed = false, valueChanged = false;
+    while (Date.now() < end) {
+      assertRoute("calendar date confirmation");
+      const candidate = reacquireDateInput(identity);
+      dialogClosed ||= !visibleCalendarDialog();
+      if (candidate) {
+        const raw = String(candidate.value || "");
+        valueChanged ||= normalizedDateInputText(raw) !== initialValue;
+        const accepted = inputDate(raw);
+        if (accepted === iso) return candidate;
+        if (dialogClosed && valueChanged && accepted && accepted !== iso) {
+          throw new Error("E-ZPass accepted a different calendar date than requested.");
+        }
+      }
+      await sleep(100);
+    }
+    if (!reacquireDateInput(identity)) {
+      throw new Error("E-ZPass replaced the calendar target input and it could not be reacquired.");
+    }
+    if (dialogClosed && !valueChanged) throw new Error("E-ZPass calendar closed without updating the target input.");
+    if (valueChanged) throw new Error("E-ZPass updated the calendar input with an unsupported or malformed date.");
+    throw new Error("E-ZPass did not accept the requested calendar date.");
+  }
+
   async function setCalendarDate(input, iso) {
     if (inputDate(input.value) === iso) return;
     const target = isoParts(iso);
+    const identity = dateInputIdentity(input);
+    const initialValue = normalizedDateInputText(input.value);
     datePickerButton(input).click();
     let dialog = await waitFor(() => visibleCalendarDialog(), 3000,
       "E-ZPass calendar did not open.");
@@ -431,7 +479,7 @@
       attempts += 1;
     }
     calendarDayControl(dialog, target).click();
-    await waitFor(() => inputDate(input.value) === iso, 2000, "E-ZPass did not accept a calendar date.");
+    await waitForDateCommit(input, identity, iso, initialValue);
   }
 
   const compactText = (value) => String(value || "").replace(/\s+/g, " ").trim();
@@ -665,7 +713,8 @@
     validateRange, validateQueries, collect,
     testing: Object.freeze({ hasActivePortalFilters, hasDescendingTransactionSort, localTimestampKey, pageChronology,
       paginationRoot, activePageNumber, nextControl, previousControl, maximizePageSize, rewindToFirstPage, assertRoute,
-      inputDate, visibleDateInputs, dialogMonth, timestampDate, calendarDayControl, waitForCalendarMonth, setCalendarDate,
+      normalizedDateInputText, inputDate, dateInputRole, visibleDateInputs, reacquireDateInput,
+      dialogMonth, timestampDate, calendarDayControl, waitForCalendarMonth, waitForDateCommit, setCalendarDate,
       accessibleControlName, namedCombos, transactionFilterControls,
       snapshotFilters, applyQuery, restoreFilters }),
     constants: Object.freeze({ MAX_TOTAL_PAGES })

@@ -1,6 +1,6 @@
 # Project documentation
 
-This reference describes version 0.5.2: trip-first exact E-ZPass searches, semantic filter detection, synchronized calendar navigation, schema-5 evidence and approval state, authenticated Turo status checks, local IndexedDB screenshots, and the four-page dashboard. Last reviewed: September 8, 2026.
+This reference describes version 0.5.3: trip-first exact E-ZPass searches, semantic filter detection, synchronized calendar navigation, normalized portal date formatting, schema-5 evidence and approval state, authenticated Turo status checks, local IndexedDB screenshots, and the four-page dashboard. Last reviewed: September 8, 2026.
 
 ## Reading paths
 

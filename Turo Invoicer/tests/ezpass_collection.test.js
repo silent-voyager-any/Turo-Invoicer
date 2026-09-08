@@ -36,6 +36,18 @@ test("normalizes portal timestamps into sortable local keys", () => {
   assert.equal(api.testing.localTimestampKey("09/05/2026 13:11 PM"), null);
 });
 
+test("normalizes only allowlisted direction marks in calendar input values", () => {
+  for (const mark of ["\u200e", "\u200f", "\u202a", "\u202b", "\u202c", "\u202d", "\u202e",
+    "\u2066", "\u2067", "\u2068", "\u2069"]) {
+    assert.equal(api.testing.inputDate(`9${mark}/1${mark}/26`), "2026-09-01");
+    assert.equal(api.testing.inputDate(`${mark}09/01/2026${mark}`), "2026-09-01");
+  }
+  assert.equal(api.testing.inputDate("9\u200b/1/26"), null);
+  assert.equal(api.testing.inputDate("9-1-26"), null);
+  assert.equal(api.testing.inputDate("September 1, 2026"), null);
+  assert.equal(api.testing.inputDate("2/30/26"), null);
+});
+
 const visibleElement = (properties = {}) => ({
   hidden: false,
   get offsetParent() { return {}; },
@@ -108,6 +120,10 @@ test("scopes Type and Tag/Plate controls to their shared transaction filter", ()
   assert.deepEqual(clone(api.testing.snapshotFilters()), {
     startDate: "2026-08-01", endDate: "2026-08-02", type: "All", identifier: "All tags", view: "10"
   });
+  fixture.start.value = "8\u200e/1\u200e/26";
+  fixture.end.value = "8\u200e/2\u200e/26";
+  assert.deepEqual(clone(api.testing.snapshotFilters()).startDate, "2026-08-01");
+  assert.deepEqual(clone(api.testing.snapshotFilters()).endDate, "2026-08-02");
 });
 
 test("distinguishes duplicate and missing labelled filter controls", () => {
@@ -122,16 +138,21 @@ test("distinguishes duplicate and missing labelled filter controls", () => {
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August",
   "September", "October", "November", "December"];
 
-function calendarFixture({ year = 2026, month = 9, delayMs = 180, stall = false, skip = false } = {}) {
+function calendarFixture({ year = 2026, month = 9, delayMs = 180, stall = false, skip = false,
+  replaceInput = false, bidiMarks = false, commitDelayMs = 0, acceptedDayOffset = 0 } = {}) {
   let shown = { year, month };
   let dialog = null;
   let open = false;
   let dialogBuilds = 0;
   let navClicks = 0;
   const localTimestamp = (day) => new Date(shown.year, shown.month - 1, day).getTime();
-  const formattedInput = (day) => `${String(shown.month).padStart(2, "0")}/${String(day).padStart(2, "0")}/${String(shown.year).slice(-2)}`;
-  const input = visibleElement({ value: "", labels: [{ textContent: "Start Date" }] });
-  const main = { querySelectorAll: () => [] };
+  const formattedInput = (day) => bidiMarks ? `${shown.month}\u200e/${day}\u200e/${String(shown.year).slice(-2)}` :
+    `${String(shown.month).padStart(2, "0")}/${String(day).padStart(2, "0")}/${String(shown.year).slice(-2)}`;
+  const startLabel = { textContent: "Start Date" }, endLabel = { textContent: "End Date" };
+  let input = visibleElement({ value: "", labels: [startLabel] });
+  const initialInput = input;
+  const endInput = visibleElement({ value: "", labels: [endLabel] });
+  const main = { querySelectorAll: (selector) => selector === "input" ? [input, endInput] : [] };
 
   const buildDialog = () => {
     dialogBuilds += 1;
@@ -150,7 +171,16 @@ function calendarFixture({ year = 2026, month = 9, delayMs = 180, stall = false,
     const days = Array.from({ length: new Date(Date.UTC(shown.year, shown.month, 0)).getUTCDate() }, (_, index) => {
       const day = index + 1;
       return visibleElement({ textContent: String(day), attributes: { role: "gridcell", "data-timestamp": String(localTimestamp(day)) },
-        click: () => { input.value = formattedInput(day); open = false; } });
+        click: () => {
+          const commit = () => {
+            const acceptedDay = day + acceptedDayOffset;
+            if (replaceInput) {
+              input = visibleElement({ value: formattedInput(acceptedDay), labels: [startLabel], parentElement: field });
+            } else input.value = formattedInput(acceptedDay);
+            open = false;
+          };
+          if (commitDelayMs) setTimeout(commit, commitDelayMs); else commit();
+        } });
     });
     const controls = [navigation("Previous month", -1), navigation("Next month", 1), ...days];
     return visibleElement({
@@ -168,12 +198,13 @@ function calendarFixture({ year = 2026, month = 9, delayMs = 180, stall = false,
     querySelectorAll: (selector) => selector === "button, [role='button'], input[type='submit'], input[type='button']" ? [picker] : []
   };
   input.parentElement = field;
+  endInput.parentElement = field;
   context.document = {
     body: { textContent: "" },
     querySelector: (selector) => selector === "main, [role='main']" ? main : null,
     querySelectorAll: (selector) => selector === '[role="dialog"]' && open ? [dialog] : []
   };
-  return { input, get dialogBuilds() { return dialogBuilds; }, get navClicks() { return navClicks; } };
+  return { initialInput, get input() { return input; }, get dialogBuilds() { return dialogBuilds; }, get navClicks() { return navClicks; } };
 }
 
 test("calendar waits for delayed month hydration and reacquires replaced dialogs", async () => {
@@ -183,6 +214,19 @@ test("calendar waits for delayed month hydration and reacquires replaced dialogs
   assert.equal(fixture.input.value, "07/31/26");
   assert.equal(fixture.navClicks, 2);
   assert.ok(fixture.dialogBuilds >= 3);
+});
+
+test("calendar accepts marked values from a delayed replacement input", async () => {
+  const fixture = calendarFixture({ month: 9, replaceInput: true, bidiMarks: true, commitDelayMs: 180 });
+  await api.testing.setCalendarDate(fixture.input, "2026-09-01");
+  assert.notEqual(fixture.input, fixture.initialInput);
+  assert.equal(api.testing.inputDate(fixture.input.value), "2026-09-01");
+  assert.equal(fixture.input.value, "9\u200e/1\u200e/26");
+});
+
+test("calendar rejects a different committed date", async () => {
+  const fixture = calendarFixture({ month: 9, acceptedDayOffset: 1 });
+  await assert.rejects(api.testing.setCalendarDate(fixture.input, "2026-09-01"), /accepted a different calendar date/);
 });
 
 test("calendar day selection uses the complete timestamp-backed date", () => {
