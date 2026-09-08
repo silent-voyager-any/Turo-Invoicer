@@ -246,8 +246,34 @@
           return false;
         }
         paused = false;
-        if (typeof options.collect === "function" && message.range) {
-          Promise.resolve(options.collect({ range: message.range, parseRecord, readDom }))
+        if (typeof options.collect === "function" && (message.range || message.queryJobs)) {
+          const evidenceTargets = message.evidenceTargets && typeof message.evidenceTargets === "object"
+            ? message.evidenceTargets : {};
+          const onEvidencePage = message.evidenceToken ? async (query, pageRecords, pageNumber) => {
+            const wanted = new Set(Array.isArray(evidenceTargets[query.queryId]) ? evidenceTargets[query.queryId].map(String) : []);
+            const covered = pageRecords.map((record) => String(record.id || "")).filter((id) => wanted.has(id));
+            if (!covered.length) return;
+            const rows = new Map(covered.map((id) => [id, [...document.querySelectorAll("tr, [role='row']")].find((candidate) =>
+              String(candidate.textContent || "").includes(id))]).filter(([, row]) => row));
+            const remaining = new Set(rows.keys());
+            while (remaining.size) {
+              const firstId = remaining.values().next().value;
+              rows.get(firstId)?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+              await new Promise((resolve) => setTimeout(resolve, 150));
+              const visible = [...remaining].filter((id) => {
+                const rect = rows.get(id)?.getBoundingClientRect?.();
+                return rect && rect.top >= 0 && rect.bottom <= window.innerHeight;
+              });
+              const visibleIds = visible.length ? visible : [firstId];
+              const response = await chrome.runtime.sendMessage({ type: "EVIDENCE_PAGE_READY", token: message.evidenceToken,
+                queryId: query.queryId, reservationId: query.reservationId, kind: query.kind,
+                identifier: query.identifier, startDate: query.startDate, endDate: query.endDate,
+                pageNumber, coveredTollIds: visibleIds });
+              if (!response?.ok) throw new Error(response?.error || "Evidence screenshot failed.");
+              visibleIds.forEach((id) => remaining.delete(id));
+            }
+          } : null;
+          Promise.resolve(options.collect({ range: message.range, queryJobs: message.queryJobs, parseRecord, readDom, onEvidencePage }))
             .then((result) => collectReply({ ok: true, source, pagePath: capturePath, ...result }))
             .catch((error) => collectReply({ ok: false, source, error: error?.message || "Portal collection failed." }));
           return true;

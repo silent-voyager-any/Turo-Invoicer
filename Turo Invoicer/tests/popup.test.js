@@ -16,7 +16,8 @@ async function popup() {
   const chrome = {
     runtime: {
       getURL: (file) => `chrome-extension://test-id/${file}`,
-      sendMessage: async (message) => ({ ok: true, state, synced: message.type === "RUN_SYNC", collection: { turo: { ok: true }, ezpass: { ok: true } } })
+      sendMessage: async (message) => ({ ok: true, state, captured: message.type === "PREPARE_BATCH" ? 2 : undefined,
+        synced: message.type === "RUN_SYNC", collection: { turo: { ok: true }, ezpass: { ok: true } } })
     },
     tabs: { create: async (options) => opened.push(options) }
   };
@@ -39,4 +40,11 @@ test("popup retains a compact sync action", async () => {
   await env.elements.get("#syncButton").listeners.click();
   assert.match(env.elements.get("#status").textContent, /Sync complete/);
   assert.equal(env.elements.get("#syncButton").disabled, false);
+});
+
+test("popup exposes the explicit active-tab evidence action", async () => {
+  const env = await popup();
+  await env.elements.get("#prepareEvidence").listeners.click();
+  assert.match(env.elements.get("#status").textContent, /Captured 2 evidence images/);
+  assert.equal(env.elements.get("#prepareEvidence").disabled, false);
 });

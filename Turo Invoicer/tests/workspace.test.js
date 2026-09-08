@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildTripWorkspace, selectAllReady, setTollSelection, setTripSelection } from "../workspace.js";
+import { batchRevision, buildTripWorkspace, selectAllReady, setTollSelection, setTripApproval, setTripSelection } from "../workspace.js";
 
 const trip = { id: "trip-1", vehicleId: "car-1", start: "2026-07-01 09:00", end: "2026-07-01 18:00" };
 const toll = { id: "toll-1", timestampMs: Date.parse("2026-07-01T16:00:00Z"), plaza: "Example", amountCents: 694 };
@@ -57,4 +57,15 @@ test("select all includes only ready trips", () => {
   const selected = selectAllReady([ready, blocked]);
   assert.equal(selected[0].selected, true);
   assert.equal(selected[1].selected, false);
+});
+
+test("evidence coverage enables individual approval and revisions invalidate it", () => {
+  const withEvidence = workspace({ evidence: [{ id: "shot-1", hash: "abc", reservationId: "trip-1", coveredTollIds: ["toll-1"] }] });
+  let drafts = setTripSelection(withEvidence.drafts, "trip-1", true);
+  assert.equal(drafts[0].batchReady, true);
+  drafts = setTripApproval(drafts, "trip-1", true);
+  assert.equal(drafts[0].tripApproved, true);
+  assert.match(batchRevision(drafts), /^batch-v1-/);
+  const rebuilt = workspace({ previousDrafts: drafts, evidence: [{ id: "shot-2", hash: "changed", reservationId: "trip-1", coveredTollIds: ["toll-1"] }] });
+  assert.equal(rebuilt.drafts[0].tripApproved, false);
 });

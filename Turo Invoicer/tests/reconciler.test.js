@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { canonicalizeIdentifier, toEpochMs, normalizeAmount, reconcileTolls, selectCompletedTrips, tripCollectionRange } from "../reconciler.js";
+import { canonicalizeIdentifier, toEpochMs, normalizeAmount, normalizeToll, reconcileTolls, selectCompletedTrips, tripCollectionRange } from "../reconciler.js";
 
 const trip = { id: "trip-1", vehicleId: "car-1", start: "2026-07-01 09:00", end: "2026-07-01 18:00" };
 const toll = { id: "toll-1", timestamp: "2026-07-01 12:00", plaza: "Queens Midtown", amount: "$6.94" };
@@ -79,6 +79,13 @@ test("normalizes E-ZPass debit signs to a positive charge before matching", () =
   assert.equal(result.matched.length, 1);
   assert.equal(result.matched[0].toll.amount, 6.94);
   assert.equal(result.matched[0].toll.amountCents, 694);
+});
+
+test("preserves sanitized trip-query provenance through normalization", () => {
+  const toll = normalizeToll({ id: "lane-1", timestamp: "2026-07-01 12:00", amount: "-$1.00", plaza: "Example",
+    tagOrPlate: "001", queryId: "1001:tag:001", queryReservationId: "1001", queryVehicleId: "car1", queryKind: "tag", queryIdentifier: "001" });
+  assert.equal(toll.queryId, "1001:tag:001");
+  assert.equal(toll.queryKind, "tag");
 });
 
 test("history excludes future, in-progress, and invalid trips using normalized timestamps", () => {

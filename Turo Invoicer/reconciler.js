@@ -241,7 +241,12 @@ export function normalizeToll(toll, timeZone = DEFAULT_TIME_ZONE) {
     tagId: toll.tagId ? String(toll.tagId) : null,
     plate: toll.plate ? String(toll.plate) : null,
     tagOrPlate: toll.tagOrPlate ? String(toll.tagOrPlate) : null,
-    vehicleId: toll.vehicleId ? String(toll.vehicleId) : null
+    vehicleId: toll.vehicleId ? String(toll.vehicleId) : null,
+    queryId: toll.queryId ? String(toll.queryId) : null,
+    queryReservationId: toll.queryReservationId ? String(toll.queryReservationId) : null,
+    queryVehicleId: toll.queryVehicleId ? String(toll.queryVehicleId) : null,
+    queryKind: ["tag", "plate"].includes(toll.queryKind) ? toll.queryKind : null,
+    queryIdentifier: toll.queryIdentifier ? String(toll.queryIdentifier) : null
   };
 }
 

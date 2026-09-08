@@ -63,7 +63,7 @@ After history collection, the worker opens one temporary inactive Turo tab and c
 
 Skeletons alone do not satisfy the wait. Structural completeness does not imply valid dates; the reconciler performs timestamp validation later. Route changes clear captures and cancel pending waits.
 
-Version 0.4.7 avoids E-ZPass filter controls. After Turo supplies the required coverage, the content script rewinds to page 1, selects 100 rows when available, and follows the visible accessible pager. It requires the unique current page number to advance and rows to stabilize; the portal's transient empty placeholder cannot terminate an in-progress navigation. It stops at disabled Next or a chronology-proven older page. `Lane Txn ID` deduplicates tolls, and any active filter, stalled/repeated page, missing pager, route change, timeout, or cap preserves the prior snapshot.
+Version 0.5.0 builds one E-ZPass search per eligible trip and active confirmed identifier. The content script uses the portal calendar picker, exact Toll and tag/plate options, follows every filtered page, and treats View 100 as optional. It restores the original filters in `finally`. `Lane Txn ID` deduplicates tolls; any failed query, restoration, repeated page, route change, or timeout preserves the prior complete snapshot.
 
 ## Dashboard and fleet state
 
@@ -71,7 +71,7 @@ The popup is a compact launcher and sync status surface. `dashboard.html` is the
 
 Fleet assignments associate a Turo internal vehicle ID with an E-ZPass tag or plate over an inclusive local-date interval. The worker retains raw identifiers, derives canonical comparison values, rejects canonically overlapping ranges, rebuilds vehicle cards from Turo labels/plates, and recalculates reconciliation in its serialized state queue. A discovered Turo plate is only a suggestion until the user confirms it. Review shortcuts store an unfinished `uiDrafts` value; they never create an assignment silently.
 
-Schema 4 builds `invoiceDrafts` through the pure `workspace.js` module. Only unique vehicle-confirmed matches enter a trip draft; collection completeness, Turo invoice status, empty toll sets, and sent fingerprints become explicit blockers. Toll/trip selections and integer-cent summaries persist locally. `evidence` and `submissionLedger` remain reserved for later milestones; no capture or submission is available yet.
+Schema 5 builds trip-specific identifier queries and extends drafts with evidence coverage, revision hashes, individual approval, and immutable batch approval. Screenshot blobs live in IndexedDB; reduced evidence metadata remains in extension storage. Submission stays fail-closed until the Turo upload adapter is verified.
 
 ## Internal message reference
 
@@ -105,7 +105,7 @@ The worker queues popup/dashboard operations to serialize read-modify-write stat
 
 The worker uses bounded tab messages and a five-minute E-ZPass collection deadline. It rechecks source routes and filters Turo to valid completed intervals. Successful complete source batches are sanitized, reconciled, and saved together in one storage item. A source error preserves the previous snapshot.
 
-Updates to settings or fleet assignments recalculate the current records without changing source refresh times and revalidate draft selections. Schema 4 preserves schema-3 sources and fleet assignments but does not upgrade their completeness or invoice status. Timeout diagnostics contain only DOM-candidate and JSON-response counts. On worker restart, persisted state and selections are rebuilt from canonical records. Pending work is not resumable across arbitrary worker/browser termination; retry sync if interrupted.
+Updates to settings or fleet assignments recalculate current records and invalidate affected evidence approvals. Schema 5 preserves older sources and fleet assignments but does not upgrade their completeness or invoice status. On worker restart, persisted state and selections are rebuilt from canonical records; an interrupted evidence or submission operation must be retried or reviewed.
 
 ## Limits
 

@@ -135,7 +135,7 @@ Storage area: `chrome.storage.local`. Key: `turoTollReconcilerState`.
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "sources": {
     "turo": { "records": [], "updatedAt": null },
     "ezpass": { "records": [], "updatedAt": null }
@@ -154,12 +154,13 @@ Storage area: `chrome.storage.local`. Key: `turoTollReconcilerState`.
   "invoiceDrafts": [],
   "selectionSummary": { "tripCount": 0, "tollCount": 0, "totalCents": 0 },
   "evidence": [],
+  "batchApproval": null,
   "submissionLedger": [],
   "reconciliation": null,
   "lastSync": null
 }
 ```
 
-Successful sync replaces the records/results and sets ISO refresh timestamps. Schema 4 derives one draft per completed trip, nests only uniquely vehicle-confirmed tolls, preserves explicit selections, and records source completeness separately from record counts. Schema-3 source records and fleet assignments migrate without data loss but remain incomplete and `status_unknown` until a successful 0.4.7 sync verifies them. Clearing removes this key and resets settings, fleet data, drafts, and source data.
+Successful sync replaces records/results and sets ISO refresh timestamps. Schema 5 derives one draft per completed trip, nests only uniquely confirmed tolls, stores per-query coverage, and binds evidence and approvals to a revision hash. Older fleet assignments migrate without data loss. Clearing removes metadata and IndexedDB evidence blobs.
 
-Version 0.4.7 collection runs may also contain `range`, `requestedRange`, `observedRange`, `completeForRange`, `ordering`, `terminalReason`, and `lastPage`. E-ZPass completeness requires disabled Next or a fully older page under explicit descending-sort proof and monotonic observed boundaries. A record count alone never establishes completeness. Each `tripEligibility` entry stores normalized `status`, `reason`, `deadline`, `verifiedAt`, and `adapterRevision`; raw invoice contents are never stored. Turo's derived range uses verified uncharged trips when available and otherwise falls back to completed trips only when every trip is charged or ineligible.
+Version 0.5.0 collection runs add `queryReports` for each reservation/identifier search. E-ZPass completeness requires every filtered query to reach disabled Next and successful restoration of the original filters. Each evidence record contains only its IndexedDB key, hash, dimensions, capture/query metadata, covered toll IDs, and retention deadline.

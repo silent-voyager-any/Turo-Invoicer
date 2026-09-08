@@ -1,6 +1,6 @@
 # Project documentation
 
-This reference describes version 0.4.7, including vehicle cards, canonical tag/plate matching, the trip-centric dashboard, schema-4 drafts and selections, authenticated Turo detail/status reads, terminal history proof, resilient E-ZPass pagination, and coverage diagnostics. Last reviewed: September 6, 2026.
+This reference describes version 0.5.0: trip-first exact E-ZPass searches, schema-5 evidence and approval state, authenticated Turo status checks, local IndexedDB screenshots, and the four-page dashboard. Last reviewed: September 7, 2026.
 
 ## Reading paths
 
@@ -31,8 +31,8 @@ Paths below are relative to the extension directory.
 
 ## Implementation versus roadmap
 
-Implemented: passive capture, explicit-sync JSON reads for history-linked reservations, completed-trip filtering, terminal Turo history proof, normalized toll-invoice eligibility checks, resilient range-aware E-ZPass pagination without date-filter interaction, trip-centric drafts, nested uniquely confirmed tolls, persistent toll/trip selection, exact cent totals, four dashboard pages, autosaved fleet drafts, dated tag/plate assignments, safe blockers, bounded SPA waiting, and local clearing.
+Implemented: authenticated trip/status reads, completed-trip filtering, trip-first date/tag/plate E-ZPass searches, filtered pagination, exact matching, local evidence capture and previews, persistent selection, per-trip approval, immutable batch approval, dated fleet assignments, and safe local clearing.
 
-Not implemented: screenshot evidence storage, invoice generation/submission, account identity verification, backend services, licensing/billing, or a packaged Chrome Web Store release. These remain gated roadmap work.
+Not implemented: Turo evidence upload/final submission, account identity verification, backend services, licensing/billing, or a packaged Chrome Web Store release. These remain gated roadmap work.
 
 The project name does not imply those missing invoicing capabilities exist. Use the source and tests as the implementation reference; treat portal selectors as adapters to validate, not guaranteed contracts.

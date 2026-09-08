@@ -20,11 +20,11 @@ h1 { font-size: 25px; letter-spacing: -0.03em; }
 .source-grid div { display: flex; align-items: center; justify-content: space-between; padding: 11px 12px; border: 1px solid #d9e2dc; border-radius: 10px; color: inherit; background: #fff; font-size: 12px; }
 .source-grid strong { font-size: 18px; }
 button { min-height: 36px; border: 1px solid #ccd7d0; border-radius: 8px; font: inherit; }
-.primary, #syncButton { width: 100%; margin-top: 10px; font-size: 13px; font-weight: 750; cursor: pointer; }
+.primary, #syncButton, #prepareEvidence { width: 100%; margin-top: 10px; font-size: 13px; font-weight: 750; cursor: pointer; }
 .primary { border: 0; color: white; background: #176b4b; }
-#syncButton { background: #fff; color: #176b4b; border: 1px solid #b9cfc4; }
-#syncButton:hover { background: #edf6f1; }
-#syncButton:disabled { cursor: wait; opacity: .65; }
+#syncButton, #prepareEvidence { background: #fff; color: #176b4b; border: 1px solid #b9cfc4; }
+#syncButton:hover, #prepareEvidence:hover { background: #edf6f1; }
+#syncButton:disabled, #prepareEvidence:disabled { cursor: wait; opacity: .65; }
 .status { min-height: 17px; margin: 9px 0; color: #5f6d66; font-size: 11px; }
 .status.error { color: #a13c3c; }
 footer { margin-top: 17px; color: #78837d; font-size: 10px; }

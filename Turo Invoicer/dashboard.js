@@ -2,7 +2,7 @@ const ids = [
   "syncButton", "clearButton", "graceMinutes", "status", "statusDot", "tripCount", "tollCount", "draftCount", "selectedTotal",
   "turoCompleteness", "ezpassCompleteness", "coverageStatus", "lastSync", "assignmentForm", "vehicleId", "vehicleLabel", "identifierKind", "identifier",
   "validFrom", "validTo", "vehicleOptions", "assignmentList", "tripsList", "tollReviewList", "tripBlockerList", "batchList", "selectAllButton", "prepareButton",
-  "batchTrips", "batchTolls", "batchTotal", "navReviewCount", "navBatchCount", "navVehicles", "navTrips", "navReview", "navBatch",
+  "batchTrips", "batchTolls", "batchTotal", "navReviewCount", "navBatchCount", "navVehicles", "navTrips", "navReview", "navBatch", "approveBatchButton", "runBatchButton",
   "vehiclesView", "tripsView", "reviewView", "batchView"
 ];
 const el = Object.fromEntries(ids.map((id) => [id, document.querySelector(`#${id}`)]));
@@ -110,18 +110,19 @@ function collectionLabel(source, run) {
   const observedText = observed?.startDate && observed?.endDate ? ` · observed ${observed.startDate}–${observed.endDate}` : "";
   const lastPage = source === "ezpass" && run?.lastPage ? ` · last page ${run.lastPage}` : "";
   const ranges = source === "ezpass" ? requestedText + observedText : requestedText;
-  return run?.complete ? `${name} complete · ${run.pageCount || 0} pages · ${run.recordCount || 0} records${lastPage}${ranges}`
+  const queries = source === "ezpass" && Array.isArray(run?.queryReports) ? ` · ${run.queryReports.length} identifier searches` : "";
+  return run?.complete ? `${name} complete · ${run.pageCount || 0} pages · ${run.recordCount || 0} records${queries}${lastPage}${ranges}`
     : `${name} incomplete · ${run?.recordCount || 0} loaded${lastPage}${ranges}`;
 }
 function coverageLabel(runs = {}) {
   const ezpass = runs.ezpass;
-  if (!ezpass?.requestedRange?.startDate || !ezpass?.requestedRange?.endDate) return { text: "Coverage unavailable", warning: true };
+  if (!ezpass) return { text: "Trip searches unavailable", warning: true };
   if (ezpass.complete !== true || ezpass.completeForRange !== true) {
-    return { text: "E-ZPass collection stopped before reaching all Turo trip dates", warning: true };
+    return { text: "One or more trip identifier searches are incomplete", warning: true };
   }
   return Number(ezpass.recordCount) > 0
-    ? { text: "E-ZPass fully covers the Turo trip dates", warning: false }
-    : { text: "Collection complete; no E-ZPass tolls occurred during these trip dates", warning: false };
+    ? { text: "All configured trip identifiers searched", warning: false }
+    : { text: "All configured trip identifiers searched; no tolls found", warning: false };
 }
 function checkbox(action, reservationId, checked, disabled, tollId = null) {
   const input = document.createElement("input"); input.type = "checkbox"; input.checked = checked; input.disabled = disabled;
@@ -134,7 +135,8 @@ function tripCard(draft, state) {
   const heading = element("div", "trip-heading"); const title = element("div", "trip-title");
   const vehicleTitle = [vehicle?.label || "Unnamed Turo vehicle", vehicle?.sourcePlate].filter(Boolean).join(" · ");
   title.append(checkbox("trip", draft.reservationId, draft.selected, !draft.selectable), element("strong", "", `${vehicleTitle} · Trip ${draft.reservationId}`));
-  heading.append(title, element("span", `pill ${draft.selectable ? "ready" : "warning"}`, draft.selectable ? "Ready for evidence" : reasonLabel(draft.eligibility)));
+  const tripState = draft.tripApproved ? "Trip approved" : draft.evidenceComplete ? "Ready for approval" : draft.selectable ? "Needs evidence" : reasonLabel(draft.eligibility);
+  heading.append(title, element("span", `pill ${draft.selectable ? "ready" : "warning"}`, tripState));
   const dates = element("p", "", `${formatTime(draft.startMs, zone)} — ${formatTime(draft.endMs, zone)}`);
   const tolls = element("div", "tolls");
   for (const toll of draft.tolls || []) {
@@ -144,13 +146,47 @@ function tripCard(draft, state) {
     row.append(element("span", "muted", `${identifier(toll)}${toll.withinGrace ? " · grace" : ""}`)); tolls.append(row);
   }
   if (!draft.tolls?.length) tolls.append(element("p", "muted", "No uniquely matched tolls found."));
-  card.append(heading, element("p", "internal-id", `Turo internal vehicle ID: ${draft.vehicleId} — not an E-ZPass tag`), dates, tolls, element("p", "", `${draft.selectedTollIds.length} selected · ${moneyCents(draft.totalCents)}`));
+  const reports = state.collectionRuns?.ezpass?.queryReports || [];
+  const tripReports = reports.filter((report) => String(report.reservationId) === String(draft.reservationId));
+  const queryText = tripReports.length ? `${tripReports.length} identifiers searched · ${tripReports.reduce((sum, item) => sum + (item.recordCount || 0), 0)} filtered toll rows` : "No confirmed identifier search completed";
+  card.append(heading, element("p", "internal-id", `Turo internal vehicle ID: ${draft.vehicleId} — not an E-ZPass tag`), dates,
+    element("p", "muted", queryText), tolls, element("p", "", `${draft.selectedTollIds.length} selected · ${moneyCents(draft.totalCents)} · ${draft.evidenceIds?.length || 0} evidence images`));
   if (draft.blockingReasons?.length) {
     const reasons = draft.blockingReasons.map((reason) =>
       reason === draft.eligibility && draft.eligibilityReason ? reasonLabel(draft.eligibilityReason) : reasonLabel(reason));
     card.append(element("p", "muted", reasons.join(" · ")));
   }
   return card;
+}
+function batchCard(draft, state) {
+  const card = element("article", "card batch-card");
+  const row = element("div", "card-row");
+  const approval = checkbox("approve-trip", draft.reservationId, draft.tripApproved, !draft.batchReady);
+  const label = element("label", "trip-title"); label.append(approval, element("strong", "", `Trip ${draft.reservationId}`));
+  row.append(label, element("span", `pill ${draft.tripApproved ? "ready" : "warning"}`, draft.tripApproved ? "Approved" : draft.batchReady ? "Approval required" : "Evidence incomplete"));
+  card.append(row, element("p", "", `${draft.selectedTollIds.length} tolls · ${moneyCents(draft.totalCents)} · revision ${draft.revisionHash}`));
+  const evidence = (state.evidence || []).filter((item) => String(item.reservationId) === String(draft.reservationId));
+  const gallery = element("div", "evidence-gallery");
+  for (const item of evidence) {
+    const figure = element("figure", "evidence-item");
+    const image = document.createElement("img"); image.alt = `${item.kind} evidence page ${item.pageNumber}`; image.dataset.evidencePreview = item.id;
+    const caption = element("figcaption", "muted", `${item.kind} ${item.identifier} · ${item.startDate}–${item.endDate} · ${item.coveredTollIds?.length || 0} tolls`);
+    const remove = element("button", "danger", "Remove evidence"); remove.type = "button"; remove.dataset.evidenceId = item.id;
+    figure.append(image, caption, remove); gallery.append(figure);
+  }
+  if (!evidence.length) gallery.append(element("p", "muted", "No evidence captured."));
+  card.append(gallery);
+  return card;
+}
+async function hydrateEvidencePreviews() {
+  if (typeof indexedDB === "undefined") return;
+  const { getEvidenceBlob } = await import("./evidence_store.js");
+  for (const image of document.querySelectorAll("img[data-evidence-preview]")) {
+    const blob = await getEvidenceBlob(image.dataset.evidencePreview).catch(() => null);
+    if (!blob || !image.isConnected) continue;
+    const url = URL.createObjectURL(blob); image.src = url;
+    image.addEventListener("load", () => URL.revokeObjectURL(url), { once: true });
+  }
 }
 function reviewCard(title, detail, actions = []) {
   const card = element("article", "card"); card.append(element("strong", "", title), element("p", "", detail));
@@ -213,8 +249,12 @@ function render(state, { restore = false } = {}) {
   }
   for (const { toll, candidates } of state.reconciliation?.ambiguous || []) addIssue(toll, `Overlaps ${candidates.length} trips`);
   fill(el.tollReviewList, [...tollReview.values()], "No unresolved tolls."); el.navReviewCount.textContent = tollReview.size;
-  fill(el.batchList, drafts.filter((draft) => draft.selected).map((draft) => reviewCard(`Trip ${draft.reservationId}`, `${draft.selectedTollIds.length} tolls · ${moneyCents(draft.totalCents)}`)), "No trips selected.");
+  fill(el.batchList, drafts.filter((draft) => draft.selected).map((draft) => batchCard(draft, state)), "No trips selected.");
   el.prepareButton.disabled = summary.tripCount === 0;
+  const selectedDrafts = drafts.filter((draft) => draft.selected);
+  el.approveBatchButton.disabled = !selectedDrafts.length || selectedDrafts.some((draft) => !draft.tripApproved || !draft.batchReady);
+  el.runBatchButton.disabled = !state.batchApproval;
+  hydrateEvidencePreviews();
   if (restore) restoreDraft(state.uiDrafts?.vehicleAssignment);
 }
 function scheduleDraftSave() { clearTimeout(draftTimer); draftTimer = setTimeout(() => send({ type: "SAVE_UI_DRAFT", draft: draftValue() }).catch((error) => setStatus(error.message, "error")), 250); }
@@ -241,6 +281,26 @@ el.tripsList.addEventListener("change", async (event) => { const action = event.
 el.selectAllButton.addEventListener("click", async () => { try { const { state } = await send({ type: "SELECT_ALL_READY", selected: true }); render(state); setStatus("All ready trips selected."); } catch (error) { setStatus(error.message, "error"); } });
 el.graceMinutes.addEventListener("change", async () => { try { const { state } = await send({ type: "UPDATE_SETTINGS", settings: { graceMinutes: Number(el.graceMinutes.value) } }); render(state); setStatus("Grace period updated; selections were revalidated."); } catch (error) { setStatus(error.message, "error"); } });
 el.syncButton.addEventListener("click", async () => { el.syncButton.disabled = true; setStatus("Collecting signed-in portal records…", "busy"); try { const response = await send({ type: "RUN_SYNC" }); render(response.state); showView(response.state.fleet?.assignments?.length ? "trips" : "vehicles"); const errors = Object.entries(response.collection).filter(([, value]) => !value.ok).map(([key, value]) => `${key}: ${value.error}`); setStatus(response.synced ? "Loaded records. Review completeness and invoice-status blockers." : `Not refreshed; prior results retained. ${errors.join(" ")}`, response.synced ? "good" : "error"); } catch (error) { setStatus(error.message, "error"); } finally { el.syncButton.disabled = false; } });
-el.prepareButton.addEventListener("click", async () => { try { await send({ type: "PREPARE_BATCH" }); } catch (error) { setStatus(error.message, "error"); } });
+el.prepareButton.addEventListener("click", () => setStatus("Make E-ZPass Transactions active, open the extension popup, and click Prepare evidence.", "busy"));
+el.batchList.addEventListener("change", async (event) => {
+  if (event.target?.dataset?.action !== "approve-trip") return;
+  try {
+    const { state } = await send({ type: "SET_TRIP_APPROVAL", reservationId: event.target.dataset.reservationId, approved: event.target.checked });
+    render(state); setStatus(event.target.checked ? "Trip approved." : "Trip approval removed.");
+  } catch (error) { setStatus(error.message, "error"); }
+});
+el.batchList.addEventListener("click", async (event) => {
+  const id = event.target?.dataset?.evidenceId; if (!id) return;
+  try { const { state } = await send({ type: "DELETE_EVIDENCE", id }); render(state); setStatus("Evidence removed; approvals were invalidated."); }
+  catch (error) { setStatus(error.message, "error"); }
+});
+el.approveBatchButton.addEventListener("click", async () => {
+  try { const { state } = await send({ type: "APPROVE_BATCH" }); render(state); setStatus("The unchanged batch is approved locally."); }
+  catch (error) { setStatus(error.message, "error"); }
+});
+el.runBatchButton.addEventListener("click", async () => {
+  try { await send({ type: "RUN_APPROVED_BATCH" }); }
+  catch (error) { setStatus(error.message, "error"); }
+});
 el.clearButton.addEventListener("click", async () => { try { const { state } = await send({ type: "CLEAR_LOCAL_DATA" }); render(state, { restore: true }); showView("vehicles"); setStatus("Local records, fleet assignments, and drafts cleared."); } catch (error) { setStatus(error.message, "error"); } });
 send({ type: "GET_STATE" }).then(({ state }) => { render(state, { restore: true }); showView(state.fleet?.assignments?.length ? "trips" : "vehicles"); setStatus("Ready."); }).catch((error) => setStatus(error.message, "error"));

@@ -1,4 +1,4 @@
-const elements = Object.fromEntries(["tripCount", "tollCount", "openDashboard", "syncButton", "status", "statusDot", "lastSync"]
+const elements = Object.fromEntries(["tripCount", "tollCount", "openDashboard", "syncButton", "prepareEvidence", "status", "statusDot", "lastSync"]
   .map((id) => [id, document.querySelector(`#${id}`)]));
 
 function send(message) {
@@ -36,6 +36,17 @@ elements.syncButton.addEventListener("click", async () => {
     status(response.synced ? "Sync complete. Open the dashboard to review." : `Not refreshed. ${errors.join(" ")}`, response.synced ? "good" : "error");
   } catch (error) { status(error.message, "error"); }
   finally { elements.syncButton.disabled = false; }
+});
+
+elements.prepareEvidence.addEventListener("click", async () => {
+  elements.prepareEvidence.disabled = true;
+  status("Filtering selected trips and capturing visible toll evidence…", "busy");
+  try {
+    const response = await send({ type: "PREPARE_BATCH" });
+    render(response.state);
+    status(`Captured ${response.captured} evidence image${response.captured === 1 ? "" : "s"}. Open the dashboard to approve each trip.`, "good");
+  } catch (error) { status(error.message, "error"); }
+  finally { elements.prepareEvidence.disabled = false; }
 });
 
 send({ type: "GET_STATE" }).then(({ state }) => { render(state); status("Ready."); })

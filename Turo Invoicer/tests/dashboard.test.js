@@ -66,7 +66,7 @@ test("dashboard submits a dated assignment and clears the completed form", async
 test("dashboard renders trip cards and sends trip selection changes", async () => {
   const env = await dashboard();
   assert.equal(env.elements.get("#tripsList").children.length, 1);
-  assert.equal(env.elements.get("#coverageStatus").textContent, "E-ZPass fully covers the Turo trip dates");
+  assert.equal(env.elements.get("#coverageStatus").textContent, "All configured trip identifiers searched");
   assert.match(env.elements.get("#ezpassCompleteness").textContent, /last page 3.*requested 2026-01-01.*observed 2025-12-01/);
   await env.elements.get("#tripsList").listeners.change({ target: {
     checked: true, dataset: { action: "trip", reservationId: "trip" }

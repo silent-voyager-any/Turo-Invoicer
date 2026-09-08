@@ -19,6 +19,14 @@ test("validates the worker's E-ZPass date-range contract", () => {
   assert.throws(() => api.validateRange({ startDate: "2026-02-30", endDate: "2026-03-01" }), /valid/);
 });
 
+test("validates exact trip-first identifier queries", () => {
+  const queries = [{ queryId: "1001:tag:00123", reservationId: "1001", vehicleId: "car1",
+    kind: "tag", identifier: "00-123", canonicalIdentifier: "00123", startDate: "2026-08-01", endDate: "2026-08-02" }];
+  assert.equal(api.validateQueries(queries).length, 1);
+  assert.throws(() => api.validateQueries([{ ...queries[0], canonicalIdentifier: "00*123" }]), /invalid trip query/);
+  assert.throws(() => api.validateQueries([{ ...queries[0], reservationId: "trip" }]), /invalid trip query/);
+});
+
 test("normalizes portal timestamps into sortable local keys", () => {
   assert.equal(api.testing.localTimestampKey("09/05/2026 13:11:16.090"), "20260905131116");
   assert.equal(api.testing.localTimestampKey("9/5/26 1:11:16 PM"), "20260905131116");

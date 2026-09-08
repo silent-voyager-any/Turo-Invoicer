@@ -42,6 +42,10 @@ input, select, #selectAllButton { min-height: 39px; padding: 0 10px; border: 1px
 .review-heading { margin-top: 24px; }
 .batch-summary { display: flex; gap: 10px; margin: 16px 0; } .batch-summary strong { padding: 9px 12px; border-radius: 9px; background: #eef3ef; }
 .batch-action { margin-top: 18px; } .safety { padding: 12px; border: 1px solid #ead6ae; border-radius: 9px; background: #fff8e9; }
+.evidence-gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
+.evidence-item { margin: 0; padding: 10px; border: 1px solid #d9e2dc; border-radius: 12px; }
+.evidence-item img { width: 100%; max-height: 220px; object-fit: contain; background: #eef3ef; border-radius: 8px; }
+.evidence-item figcaption { margin: 8px 0; overflow-wrap: anywhere; }
 footer { justify-content: flex-end; margin-top: 20px; } .text-button { border: 0; background: transparent; color: #65716b; text-decoration: underline; cursor: pointer; }
 :focus-visible { outline: 2px solid #176b4b; outline-offset: 2px; }
 @media (max-width: 900px) { .vehicle-layout { grid-template-columns: 1fr; } .metrics { grid-template-columns: repeat(2,1fr); } }

@@ -21,7 +21,7 @@ Detail bodies must have a JSON content type and remain within the two-million-by
 | `https://www.e-zpassny.com/*` | Inject collectors and query/message the NY portal tab |
 | `https://e-zpassny.com/*` | Support the portal's apex hostname |
 
-No `cookies`, `webRequest`, `tabs`, `scripting`, `activeTab`, `offscreen`, `declarativeNetRequest`, `unlimitedStorage`, or all-sites permission is declared. Static script injection and matching tab access use the declared host permissions. The passive page observer makes no API requests. Its body capture is restricted to the exact history and transactions page paths; origin-wide startup registration supports SPA navigation. The separate history detail reader performs only the bounded same-origin JSON GETs described above, without additional permissions. Version 0.4.7 also reuses one temporary inactive Turo tab for exact reservation invoice/status routes; it closes the tab in `finally` and stores only reduced eligibility metadata.
+No `cookies`, `webRequest`, `tabs`, `scripting`, `offscreen`, `declarativeNetRequest`, `unlimitedStorage`, or all-sites permission is declared. `activeTab` is used only after the user opens the popup on the visible E-ZPass Transactions tab; `alarms` removes sent evidence after its retention deadline. Static scripts and matching-tab access use the two portal host permissions. Version 0.5.0 binds each screenshot request to a short-lived in-memory token and the exact active transaction tab. PNG blobs stay in IndexedDB; only hashes and reduced metadata enter extension storage.
 
 ## Trust boundaries
 

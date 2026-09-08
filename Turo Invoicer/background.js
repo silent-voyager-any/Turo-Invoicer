@@ -1,12 +1,14 @@
 import { canonicalizeIdentifier, DEFAULT_TIME_ZONE, normalizeTrip, reconcileTolls, selectCompletedTrips, tripCollectionRange } from "./reconciler.js";
-import { buildTripWorkspace, selectAllReady, setTollSelection, setTripSelection, summarizeSelection } from "./workspace.js";
+import { batchRevision, buildTripWorkspace, selectAllReady, setTollSelection, setTripApproval, setTripSelection, summarizeSelection } from "./workspace.js";
+import { buildTripQueryJobs, flattenTripQueries } from "./trip_queries.js";
+import { clearEvidenceBlobs, deleteEvidenceBlob, storePng } from "./evidence_store.js";
 
 const STORAGE_KEY = "turoTollReconcilerState";
 const PATTERNS = { turo: ["https://turo.com/*"], ezpass: ["https://www.e-zpassny.com/*", "https://e-zpassny.com/*"] };
 const MAX_RECORDS = 5000;
 const HISTORY_PATH = "/us/en/trips/history";
 const TRANSACTIONS_PATH = "/ezpass/dashboard/transactions";
-const EZPASS_COLLECTOR_REVISION = "0.4.7-history-pagination-2";
+const EZPASS_COLLECTOR_REVISION = "0.5.0-trip-query-1";
 const TURO_INVOICE_ADAPTER_REVISION = "0.4.7-invoice-dom-1";
 const STANDARD_TOLL_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const TRUSTED_PAGES = new Set(["popup.html", "dashboard.html"]);
@@ -24,9 +26,10 @@ const isHistoryUrl = (url) => {
   } catch { return false; }
 };
 let operations = Promise.resolve();
+const evidenceSessions = new Map();
 
 const emptyState = () => ({
-  version: 4,
+  version: 5,
   sources: {
     turo: { records: [], updatedAt: null },
     ezpass: { records: [], updatedAt: null }
@@ -44,6 +47,7 @@ const emptyState = () => ({
   invoiceDrafts: [],
   selectionSummary: { tripCount: 0, tollCount: 0, totalCents: 0 },
   evidence: [],
+  batchApproval: null,
   submissionLedger: [],
   reconciliation: null,
   lastSync: null
@@ -54,10 +58,19 @@ const storageReady = chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED
 async function getState() {
   await storageReady;
   const stored = (await chrome.storage.local.get(STORAGE_KEY))[STORAGE_KEY];
-  if (stored?.version === 4) {
+  if (stored?.version === 5) {
     const changed = hydrateCanonicalAssignments(stored);
     const state = reconcile(stored);
     if (changed) await save(state);
+    return state;
+  }
+  if (stored?.version === 4) {
+    const fresh = emptyState();
+    Object.assign(fresh, stored, { version: 5, batchApproval: null });
+    fresh.evidence = Array.isArray(stored.evidence) ? stored.evidence : [];
+    hydrateCanonicalAssignments(fresh);
+    const state = reconcile(fresh);
+    await save(state);
     return state;
   }
   const fresh = emptyState();
@@ -120,10 +133,12 @@ function reconcile(state) {
     tripEligibility: state.tripEligibility,
     collectionRuns: state.collectionRuns,
     submissionLedger: state.submissionLedger,
+    evidence: state.evidence,
     timeZone: state.settings.timeZone
   });
   state.invoiceDrafts = workspace.drafts;
   state.selectionSummary = workspace.summary;
+  if (state.batchApproval?.revisionHash !== batchRevision(state.invoiceDrafts)) state.batchApproval = null;
   return state;
 }
 
@@ -137,7 +152,8 @@ function sanitizeRecords(source, raw) {
   if (!Array.isArray(raw) || raw.length > MAX_RECORDS) throw new Error("Invalid record batch.");
   const fields = source === "turo"
     ? ["id", "vehicleId", "start", "end", "vehicleLabel", "vehiclePlate", "invoiceStatus", "invoiceStatusReason", "invoiceDeadline"]
-    : ["id", "timestamp", "plaza", "amount", "tagId", "plate", "tagOrPlate", "vehicleId"];
+    : ["id", "timestamp", "plaza", "amount", "tagId", "plate", "tagOrPlate", "vehicleId",
+      "queryId", "queryReservationId", "queryVehicleId", "queryKind", "queryIdentifier"];
   const records = new Map();
   for (const candidate of raw) {
     if (!candidate || typeof candidate !== "object") continue;
@@ -265,7 +281,7 @@ async function collect(source, request = {}) {
   try {
     // Turo detail reads share its 20s content deadline; allow 5s for the reply.
       const response = await tabRequest(tabs[0].id, {
-        type: "COLLECT_NOW", ...(source === "ezpass" ? { range: request.range } : {})
+        type: "COLLECT_NOW", ...(source === "ezpass" ? { range: request.range, queryJobs: request.queryJobs } : {})
       }, source === "ezpass" ? 305000 : 25000);
       if (source === "ezpass" && response?.collectorRevision !== EZPASS_COLLECTOR_REVISION) {
         throw new Error("The E-ZPass tab is running an older extension script. Reload that transactions tab, then sync again.");
@@ -302,7 +318,8 @@ async function collect(source, request = {}) {
       completeForRange: response.completeForRange === true,
       observedRange: response.observedRange || null,
       ordering: ["descending", "unverified"].includes(response.ordering) ? response.ordering : "unverified",
-      lastPage: Number.isInteger(response.lastPage) && response.lastPage > 0 ? response.lastPage : null
+      lastPage: Number.isInteger(response.lastPage) && response.lastPage > 0 ? response.lastPage : null,
+      queryReports: Array.isArray(response.queryReports) ? response.queryReports.slice(0, 500) : []
     };
   } catch (error) {
     return { source, ok: false, error: error.message || "Reload the portal tab after installation." };
@@ -322,23 +339,41 @@ async function runSync() {
       ezpass: { ok: false, error: "E-ZPass was not started because Turo invoice verification failed." } }, synced: false };
   }
   const verifiedUncharged = turo.records.filter((trip) => trip.invoiceStatus === "eligible_uncharged");
-  const unknownTrips = turo.records.filter((trip) => trip.invoiceStatus === "status_unknown");
-  const coverageTrips = verifiedUncharged.length ? verifiedUncharged : unknownTrips.length ? unknownTrips : turo.records;
-  const range = tripCollectionRange(coverageTrips, {
+  const range = tripCollectionRange(verifiedUncharged, {
     timeZone: currentState.settings.timeZone, graceMinutes: currentState.settings.graceMinutes
   });
-  if (!range) return { state: currentState, collection: { turo, ezpass: { ok: false, error: "No completed-trip coverage range is available." } }, synced: false };
-  turo.range = range;
-  if (!verifiedUncharged.length && unknownTrips.length) {
-    turo.warning = [turo.warning, "Turo toll-invoice status is unverified; E-ZPass coverage uses all completed trips."].filter(Boolean).join(" ");
+  if (!verifiedUncharged.length) {
+    const ezpass = { source: "ezpass", ok: true, records: [], complete: true, completeForRange: true,
+      pageCount: 0, rawCount: 0, chunkCount: 0, terminalReason: "no_eligible_trips", queryReports: [], range: null };
+    return commitSync(currentState, turo, ezpass, null);
   }
-  const ezpass = await collect("ezpass", { range });
+  if (!range) return { state: currentState, collection: { turo, ezpass: { ok: false, error: "Eligible trips did not produce a valid E-ZPass date range." } }, synced: false };
+  turo.range = range;
+  const queryJobs = flattenTripQueries(buildTripQueryJobs({
+    trips: turo.records,
+    assignments: currentState.fleet?.assignments || [],
+    graceMinutes: currentState.settings.graceMinutes,
+    timeZone: currentState.settings.timeZone
+  }));
+  if (!queryJobs.length) {
+    turo.warning = [turo.warning, "Eligible trips were loaded, but no confirmed identifiers are available for E-ZPass search."].filter(Boolean).join(" ");
+    const ezpass = { source: "ezpass", ok: true, records: [], complete: true, completeForRange: true,
+      pageCount: 0, rawCount: 0, chunkCount: 0, terminalReason: "no_confirmed_identifiers", queryReports: [], range };
+    return commitSync(await getState(), turo, ezpass, range);
+  }
+  const coveredTrips = new Set(queryJobs.map((job) => job.reservationId));
+  const missingMappings = verifiedUncharged.filter((trip) => !coveredTrips.has(String(trip.id))).length;
+  if (missingMappings) turo.warning = [turo.warning, `${missingMappings} eligible trips have no active confirmed identifier and were not searched.`].filter(Boolean).join(" ");
+  const ezpass = await collect("ezpass", { range, queryJobs });
   // Commit both sources together. A failed/empty extraction leaves the last
   // complete snapshot intact and visibly reports that it was NOT refreshed.
   if (!turo.ok || !ezpass.ok) {
     return { state: await getState(), collection: { turo, ezpass }, synced: false };
   }
-  const state = await getState();
+  return commitSync(await getState(), turo, ezpass, range);
+}
+
+async function commitSync(state, turo, ezpass, range) {
   const now = new Date().toISOString();
   for (const result of [turo, ezpass]) {
     state.sources[result.source] = { records: result.records, updatedAt: now };
@@ -356,7 +391,8 @@ async function runSync() {
       completeForRange: result.source === "ezpass" ? result.completeForRange === true : result.complete === true,
       observedRange: result.observedRange || null,
       ordering: result.ordering || null,
-      lastPage: result.lastPage || null
+      lastPage: result.lastPage || null,
+      queryReports: result.queryReports || []
     };
   }
   state.tripEligibility = Object.fromEntries(state.sources.turo.records.map((trip) => [String(trip.id), {
@@ -483,7 +519,98 @@ async function clearData() {
   }));
   await storageReady;
   await chrome.storage.local.remove(STORAGE_KEY);
+  await clearEvidenceBlobs().catch(() => {});
   return { state: emptyState(), resetFailures: resets.flat().filter((r) => r.status === "rejected").length };
+}
+
+async function prepareBatchEvidence() {
+  const state = await getState();
+  const selected = state.invoiceDrafts.filter((draft) => draft.selected === true && draft.selectable === true);
+  if (!selected.length) throw new Error("Select at least one ready trip first.");
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = tabs[0];
+  if (!Number.isInteger(tab?.id) || !isTransactionsUrl(tab.url)) {
+    throw new Error("Open the E-ZPass transactions tab, then click Prepare evidence from the extension popup.");
+  }
+  const selectedReservations = new Set(selected.map((draft) => String(draft.reservationId)));
+  const allQueries = flattenTripQueries(buildTripQueryJobs({
+    trips: state.sources.turo.records,
+    tripEligibility: state.tripEligibility,
+    assignments: state.fleet.assignments,
+    graceMinutes: state.settings.graceMinutes,
+    timeZone: state.settings.timeZone
+  }));
+  const queryMap = new Map(allQueries.filter((query) => selectedReservations.has(query.reservationId)).map((query) => [query.queryId, query]));
+  const sourceById = new Map(state.sources.ezpass.records.map((toll) => [String(toll.id), toll]));
+  const evidenceTargets = {};
+  for (const draft of selected) {
+    for (const tollId of draft.selectedTollIds) {
+      const source = sourceById.get(String(tollId));
+      if (!source) throw new Error("Selected toll is missing from the verified E-ZPass snapshot. Sync again before preparing evidence.");
+      const matching = [...queryMap.values()].filter((query) => query.reservationId === String(draft.reservationId) &&
+        [source.tagId, source.plate, source.tagOrPlate].some((value) => canonicalizeIdentifier(query.kind, value) === query.canonicalIdentifier));
+      if (!matching.length) throw new Error("Selected toll no longer resolves to an exact active trip identifier. Sync again.");
+      for (const query of matching) (evidenceTargets[query.queryId] ||= []).push(String(tollId));
+    }
+  }
+  const queryJobs = [...queryMap.values()].filter((query) => evidenceTargets[query.queryId]?.length);
+  if (!queryJobs.length) throw new Error("No selected toll rows are available for evidence capture.");
+  const token = crypto.randomUUID();
+  const session = { tabId: tab.id, windowId: tab.windowId, token, evidence: [], allowedQueries: new Set(queryJobs.map((query) => query.queryId)) };
+  evidenceSessions.set(token, session);
+  try {
+    const response = await tabRequest(tab.id, { type: "COLLECT_NOW", queryJobs, evidenceTargets, evidenceToken: token }, 305000);
+    if (!response?.ok || response.collectorRevision !== EZPASS_COLLECTOR_REVISION || response.complete !== true) {
+      throw new Error(response?.error || "E-ZPass evidence searches did not complete.");
+    }
+    const covered = new Set(session.evidence.flatMap((item) => item.coveredTollIds || []));
+    const missing = Object.values(evidenceTargets).flat().filter((id) => !covered.has(String(id)));
+    if (missing.length) throw new Error(`${missing.length} selected toll rows were not visible in captured evidence.`);
+    const old = state.evidence.filter((item) => selectedReservations.has(String(item.reservationId)));
+    for (const item of old) await deleteEvidenceBlob(item.id).catch(() => {});
+    state.evidence = state.evidence.filter((item) => !selectedReservations.has(String(item.reservationId))).concat(session.evidence);
+    state.batchApproval = null;
+    return { state: await save(reconcile(state)), captured: session.evidence.length };
+  } catch (error) {
+    for (const item of session.evidence) await deleteEvidenceBlob(item.id).catch(() => {});
+    throw error;
+  } finally {
+    evidenceSessions.delete(token);
+  }
+}
+
+async function captureEvidencePage(message, sender) {
+  const session = evidenceSessions.get(String(message.token || ""));
+  if (!session || sender.id !== chrome.runtime.id || sender.tab?.id !== session.tabId ||
+      !isTransactionsUrl(sender.url) || !session.allowedQueries.has(String(message.queryId || ""))) {
+    throw new Error("Evidence capture request was not authorized.");
+  }
+  const coveredTollIds = Array.isArray(message.coveredTollIds) ? [...new Set(message.coveredTollIds.map(String))].slice(0, 100) : [];
+  if (!coveredTollIds.length) throw new Error("Evidence page did not identify selected toll rows.");
+  const active = await chrome.tabs.get(session.tabId);
+  if (!active?.active || !isTransactionsUrl(active.url)) throw new Error("Keep the E-ZPass transactions tab visible throughout evidence capture.");
+  const dataUrl = await chrome.tabs.captureVisibleTab(session.windowId, { format: "png" });
+  const capturedAt = new Date().toISOString();
+  const metadata = await storePng(dataUrl, {
+    reservationId: String(message.reservationId || ""), queryId: String(message.queryId || ""),
+    kind: message.kind === "plate" ? "plate" : "tag", identifier: String(message.identifier || "").slice(0, 100),
+    startDate: String(message.startDate || "").slice(0, 10), endDate: String(message.endDate || "").slice(0, 10),
+    pageNumber: Number.isInteger(message.pageNumber) ? message.pageNumber : 1,
+    coveredTollIds, capturedAt, sourceRoute: TRANSACTIONS_PATH, retentionDeadline: null
+  });
+  session.evidence.push(metadata);
+  return { evidenceId: metadata.id };
+}
+
+async function cleanupExpiredEvidence() {
+  const state = await getState();
+  const now = Date.now();
+  const expired = state.evidence.filter((item) => item.retentionDeadline && Date.parse(item.retentionDeadline) <= now);
+  if (!expired.length) return;
+  for (const item of expired) await deleteEvidenceBlob(item.id).catch(() => {});
+  const ids = new Set(expired.map((item) => item.id));
+  state.evidence = state.evidence.filter((item) => !ids.has(item.id));
+  await save(reconcile(state));
 }
 
 async function handle(message) {
@@ -545,7 +672,8 @@ async function handle(message) {
         state.invoiceDrafts, message.reservationId, message.tollId, message.selected === true
       );
       state.selectionSummary = summarizeSelection(state.invoiceDrafts);
-      return { state: await save(state) };
+      state.batchApproval = null;
+      return { state: await save(reconcile(state)) };
     }
     case "SET_TRIP_SELECTION": {
       const state = await getState();
@@ -553,24 +681,60 @@ async function handle(message) {
         state.invoiceDrafts, message.reservationId, message.selected === true
       );
       state.selectionSummary = summarizeSelection(state.invoiceDrafts);
-      return { state: await save(state) };
+      state.batchApproval = null;
+      return { state: await save(reconcile(state)) };
     }
     case "SELECT_ALL_READY": {
       const state = await getState();
       state.invoiceDrafts = selectAllReady(state.invoiceDrafts, message.selected !== false);
       state.selectionSummary = summarizeSelection(state.invoiceDrafts);
+      state.batchApproval = null;
       return { state: await save(state) };
     }
     case "PREPARE_BATCH": {
+      return prepareBatchEvidence();
+    }
+    case "SET_TRIP_APPROVAL": {
       const state = await getState();
-      if (!state.selectionSummary?.tripCount) throw new Error("Select at least one ready trip first.");
-      throw new Error("Evidence capture is not enabled in this collector release. No invoice was submitted.");
+      state.invoiceDrafts = setTripApproval(state.invoiceDrafts, message.reservationId, message.approved === true);
+      state.batchApproval = null;
+      return { state: await save(state) };
+    }
+    case "APPROVE_BATCH": {
+      const state = await getState();
+      const selected = state.invoiceDrafts.filter((draft) => draft.selected);
+      if (!selected.length || selected.some((draft) => !draft.batchReady || !draft.tripApproved)) {
+        throw new Error("Every selected trip must have complete evidence and individual approval.");
+      }
+      state.batchApproval = { revisionHash: batchRevision(state.invoiceDrafts), approvedAt: new Date().toISOString() };
+      return { state: await save(state) };
+    }
+    case "RUN_APPROVED_BATCH": {
+      const state = await getState();
+      if (!state.batchApproval || state.batchApproval.revisionHash !== batchRevision(state.invoiceDrafts)) {
+        throw new Error("Approve the current unchanged batch before submission.");
+      }
+      throw new Error("Turo upload and final-send automation remains disabled until its authenticated fixtures pass. No invoice was submitted.");
+    }
+    case "DELETE_EVIDENCE": {
+      const state = await getState();
+      const item = state.evidence.find((entry) => entry.id === message.id);
+      if (!item) throw new Error("Evidence was not found.");
+      await deleteEvidenceBlob(item.id);
+      state.evidence = state.evidence.filter((entry) => entry.id !== item.id);
+      state.batchApproval = null;
+      return { state: await save(reconcile(state)) };
     }
     default: throw new Error("Unknown extension operation.");
   }
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "EVIDENCE_PAGE_READY") {
+    captureEvidencePage(message, sender).then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || "Evidence capture failed." }));
+    return true;
+  }
   // Only our exact extension UI pages can request privileged operations.
   const trustedPage = [...TRUSTED_PAGES].some((page) => sender.url === chrome.runtime.getURL(page));
   if (sender.id !== chrome.runtime.id || !trustedPage) {
@@ -586,4 +750,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: false, error: error.message || "Extension operation failed." });
   });
   return true;
+});
+
+chrome.runtime.onInstalled?.addListener(() => {
+  chrome.alarms.create("evidence-retention", { periodInMinutes: 24 * 60 });
+});
+chrome.alarms?.onAlarm?.addListener((alarm) => {
+  if (alarm.name === "evidence-retention") cleanupExpiredEvidence().catch(() => {});
 });

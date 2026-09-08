@@ -64,8 +64,12 @@
         <p class="eyebrow">BATCH</p><h2>Selected reimbursement drafts</h2>
         <div class="batch-summary"><strong id="batchTrips">0 trips</strong><strong id="batchTolls">0 tolls</strong><strong id="batchTotal">$0.00</strong></div>
         <div id="batchList" class="stack"></div>
-        <button id="prepareButton" class="primary batch-action">Prepare selected trips</button>
-        <p class="safety">Evidence capture and Turo submission stay blocked until authenticated pagination, invoice-state, evidence-row, and reimbursement-form fixtures are verified. This build cannot send an invoice.</p>
+        <div class="inline-actions batch-action">
+          <button id="prepareButton">Prepare evidence from E-ZPass</button>
+          <button id="approveBatchButton" class="primary">Approve unchanged batch</button>
+          <button id="runBatchButton" class="primary">Run approved batch</button>
+        </div>
+        <p class="safety">To capture evidence, keep E-ZPass Transactions active and use Prepare evidence in the toolbar popup. Version 0.5.0 stores evidence and approvals locally; final Turo submission remains fail-closed until its upload adapter is verified.</p>
       </section>
 
       <footer><button id="clearButton" class="text-button">Clear local data</button></footer>

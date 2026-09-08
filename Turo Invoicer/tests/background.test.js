@@ -14,7 +14,7 @@ let managedUrl = null;
 const existingTollInvoices = new Set();
 const portalResponses = {
   1: { ok: true, source: "turo", complete: true, pagePath: "/us/en/trips/history", records: [{ id: "1001", vehicleId: "car1", start: "2026-07-01 09:00", end: "2026-07-01 18:00", vehicleLabel: "Example car", vehiclePlate: "NY:ABC-123", guestName: "Synthetic private field" }] },
-  2: { ok: true, source: "ezpass", complete: true, completeForRange: true, collectorRevision: "0.4.7-history-pagination-2", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, accountNumber: "Synthetic private field" }] }
+  2: { ok: true, source: "ezpass", complete: true, completeForRange: true, collectorRevision: "0.5.0-trip-query-1", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, tagOrPlate: "ABC123", queryId: "1001:plate:ABC123", queryReservationId: "1001", queryVehicleId: "car1", queryKind: "plate", queryIdentifier: "NY:ABC-123", accountNumber: "Synthetic private field" }] }
 };
 globalThis.chrome = {
   runtime: { id: "test-id", getURL: (file) => "chrome-extension://test-id/" + file,
@@ -71,6 +71,7 @@ test("worker trusts exact extension UI pages and rejects all other senders", asy
 });
 test("worker collects both sources atomically and strips extra fields", async () => {
   sentMessages.length = 0;
+  await call({ type: "UPSERT_ASSIGNMENT", assignment: { vehicleId: "car1", kind: "plate", identifier: "NY:ABC-123" } });
   const result = await call({ type: "RUN_SYNC" });
   assert.equal(result.ok, true);
   assert.equal(result.synced, true);
@@ -78,11 +79,12 @@ test("worker collects both sources atomically and strips extra fields", async ()
   assert.equal(result.state.sources.ezpass.records.length, 1);
   assert.equal(result.state.sources.turo.records[0].guestName, undefined);
   assert.equal(result.state.sources.ezpass.records[0].accountNumber, undefined);
-  assert.equal(result.state.reconciliation.matched.length, 0);
-  assert.equal(result.state.reconciliation.unmatchedTolls[0].reason, "identifier_not_mapped");
+  assert.equal(result.state.reconciliation.matched.length, 1);
   assert.deepEqual(sentMessages.filter(({ message }) => message.type === "COLLECT_NOW").map(({ id }) => id), [1, 2]);
   assert.deepEqual(sentMessages.find(({ id, message }) => id === 2 && message.type === "COLLECT_NOW").message.range,
     { startDate: "2026-07-01", endDate: "2026-07-01" });
+  assert.deepEqual(sentMessages.find(({ id, message }) => id === 2 && message.type === "COLLECT_NOW").message.queryJobs
+    .map(({ reservationId, kind, canonicalIdentifier }) => [reservationId, kind, canonicalIdentifier]), [["1001", "plate", "ABC123"]]);
   assert.deepEqual(result.state.collectionRuns.ezpass.requestedRange, { startDate: "2026-07-01", endDate: "2026-07-01" });
 });
 test("verified uncharged trips define the E-ZPass coverage boundary", async () => {
@@ -137,7 +139,7 @@ test("worker accepts Turo responses beyond the old five-second transport deadlin
   try {
     const result = await call({ type: "RUN_SYNC" });
     assert.equal(result.synced, true);
-    assert.equal(result.state.reconciliation.unmatchedTolls[0].reason, "identifier_not_mapped");
+    assert.equal(result.state.reconciliation.matched.length, 1);
   } finally { delayTuro = false; }
 });
 test("a content-side hydration timeout preserves the complete previous snapshot", async () => {
@@ -177,7 +179,7 @@ test("worker invalidates version-1 snapshots but migrates manual mappings", asyn
   stored.turoTollReconcilerState = { version: 1, sources: { turo: { records: [{ id: "old" }] } },
     settings: { vehicleByTag: { "001": "car1" }, vehicleByPlate: {}, graceMinutes: 15 } };
   const { state } = await call({ type: "GET_STATE" });
-  assert.equal(state.version, 4);
+  assert.equal(state.version, 5);
   assert.equal(state.sources.turo.records.length, 0);
   assert.deepEqual(state.fleet.assignments.map(({ kind, identifier, vehicleId, validFrom, validTo }) =>
     ({ kind, identifier, vehicleId, validFrom, validTo })), [
@@ -223,7 +225,7 @@ test("schema-3 state migrates without treating its loaded page as complete", asy
     uiDrafts: { vehicleAssignment: {} }, evidence: [], submissionLedger: [], lastSync: "prior"
   };
   const { state } = await call({ type: "GET_STATE" });
-  assert.equal(state.version, 4);
+  assert.equal(state.version, 5);
   assert.equal(state.sources.turo.records.length, 1);
   assert.equal(state.collectionRuns.turo.complete, false);
   assert.equal(state.invoiceDrafts[0].eligibility, "status_unknown");

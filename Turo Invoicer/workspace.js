@@ -25,6 +25,9 @@ function confirmedMatches(reconciliation) {
       tagId: match.toll.tagId || null,
       plate: match.toll.plate || null,
       tagOrPlate: match.toll.tagOrPlate || null,
+      queryId: match.toll.queryId || null,
+      queryKind: match.toll.queryKind || null,
+      queryIdentifier: match.toll.queryIdentifier || null,
       withinGrace: match.withinGrace === true
     });
   }
@@ -38,7 +41,7 @@ function sentFingerprints(ledger) {
 
 export function buildTripWorkspace({
   trips = [], reconciliation = null, previousDrafts = [], tripEligibility = {},
-  collectionRuns = {}, submissionLedger = [], timeZone = "America/New_York"
+  collectionRuns = {}, submissionLedger = [], evidence = [], timeZone = "America/New_York"
 } = {}) {
   const old = previousByTrip(previousDrafts);
   const matches = confirmedMatches(reconciliation);
@@ -68,6 +71,18 @@ export function buildTripWorkspace({
     const selectable = blockingReasons.length === 0;
     const totalCents = tolls.filter((toll) => selectedTollIds.includes(toll.id))
       .reduce((sum, toll) => sum + (Number.isInteger(toll.amountCents) ? toll.amountCents : 0), 0);
+    const tripEvidence = (Array.isArray(evidence) ? evidence : []).filter((item) =>
+      text(item.reservationId) === reservationId && item.status !== "deleted");
+    const covered = new Set(tripEvidence.flatMap((item) => Array.isArray(item.coveredTollIds) ? item.coveredTollIds.map(text) : []));
+    const evidenceComplete = selectedTollIds.length > 0 && selectedTollIds.every((id) => covered.has(id));
+    const revisionInput = JSON.stringify({ reservationId, vehicleId: trip.vehicleId, startMs: trip.startMs, endMs: trip.endMs,
+      selectedTollIds: [...selectedTollIds].sort(), totalCents,
+      evidence: tripEvidence.map((item) => [item.id, item.hash]).sort((a, b) => a[0].localeCompare(b[0])) });
+    let hash = 2166136261;
+    for (let index = 0; index < revisionInput.length; index += 1) hash = Math.imul(hash ^ revisionInput.charCodeAt(index), 16777619);
+    const revisionHash = `v1-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+    const tripApproved = prior?.tripApproved === true && prior?.approvedRevision === revisionHash;
+    const batchReady = selectable && evidenceComplete;
     drafts.push({
       id: `draft:${reservationId}`,
       reservationId,
@@ -84,7 +99,14 @@ export function buildTripWorkspace({
       selectable,
       blockingReasons,
       totalCents,
-      status: selectable ? "needs_evidence" : eligibility === "already_charged" ? "already_charged" : "manual_review"
+      evidenceIds: tripEvidence.map((item) => item.id),
+      evidenceComplete,
+      revisionHash,
+      tripApproved,
+      approvedRevision: tripApproved ? revisionHash : null,
+      batchReady,
+      status: !selectable ? (eligibility === "already_charged" ? "already_charged" : "manual_review") :
+        !evidenceComplete ? "needs_evidence" : tripApproved ? "trip_approved" : "ready"
     });
   }
 
@@ -105,7 +127,9 @@ export function setTollSelection(drafts, reservationId, tollId, selected) {
     const reasons = (draft.blockingReasons || []).filter((reason) => reason !== "no_tolls_selected");
     if (!selectedTollIds.length) reasons.push("no_tolls_selected");
     const selectable = reasons.length === 0;
-    return { ...draft, selectedTollIds, selectionTouched: true, totalCents, blockingReasons: reasons, selectable, selected: selectable && draft.selected };
+    return { ...draft, selectedTollIds, selectionTouched: true, totalCents, blockingReasons: reasons, selectable,
+      selected: selectable && draft.selected, tripApproved: false, approvedRevision: null,
+      evidenceComplete: false, batchReady: false, status: selectable ? "needs_evidence" : "manual_review" };
   });
 }
 
@@ -115,7 +139,7 @@ export function setTripSelection(drafts, reservationId, selected) {
     if (text(draft.reservationId) !== text(reservationId)) return draft;
     found = true;
     if (selected && !draft.selectable) throw new Error("Trip is not ready for selection.");
-    return { ...draft, selected: selected === true };
+    return { ...draft, selected: selected === true, ...(selected ? {} : { tripApproved: false, approvedRevision: null }) };
   });
   if (!found) throw new Error("Trip draft was not found.");
   return next;
@@ -123,6 +147,27 @@ export function setTripSelection(drafts, reservationId, selected) {
 
 export function selectAllReady(drafts, selected = true) {
   return drafts.map((draft) => ({ ...draft, selected: selected === true && draft.selectable === true }));
+}
+
+export function setTripApproval(drafts, reservationId, approved) {
+  let found = false;
+  const next = drafts.map((draft) => {
+    if (text(draft.reservationId) !== text(reservationId)) return draft;
+    found = true;
+    if (approved && (!draft.selected || !draft.batchReady)) throw new Error("Trip needs selected tolls and complete evidence before approval.");
+    return { ...draft, tripApproved: approved === true, approvedRevision: approved ? draft.revisionHash : null,
+      status: approved ? "trip_approved" : draft.batchReady ? "ready" : draft.status };
+  });
+  if (!found) throw new Error("Trip draft was not found.");
+  return next;
+}
+
+export function batchRevision(drafts) {
+  const selected = drafts.filter((draft) => draft.selected).map((draft) => [draft.reservationId, draft.revisionHash]).sort((a, b) => a[0].localeCompare(b[0]));
+  let hash = 2166136261;
+  const value = JSON.stringify(selected);
+  for (let index = 0; index < value.length; index += 1) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+  return `batch-v1-${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 
 export function summarizeSelection(drafts) {

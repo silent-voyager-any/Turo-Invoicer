@@ -21,7 +21,7 @@ Keep exactly one matching tab per source open:
 - Turo: `https://turo.com/us/en/trips/history`.
 - E-ZPass NY: `https://www.e-zpassny.com/ezpass/dashboard/transactions`.
 
-Do not leave duplicate matching history/transactions tabs open. Other Turo pages are ignored. Leave the E-ZPass transaction list unfiltered; version 0.4.7 rewinds it, selects 100 rows when available, and paginates automatically. The extension does not solve challenges or sign in for you.
+Do not leave duplicate matching history/transactions tabs open. Version 0.5.0 searches E-ZPass separately for every eligible trip and confirmed active tag/plate, then restores the filters that were present before sync. The extension does not solve challenges or sign in for you.
 
 Use toll passage/transaction time, not posting date. Check which vehicles and reservations are actually represented. Clear data and reload before changing accounts or beginning a different date-range capture workflow: tab-memory network records can accumulate during navigation.
 
@@ -73,7 +73,7 @@ This action does not delete portal records or browser cookies. A later explicit 
 
 ## History-only policy and upgrade
 
-Version 0.4.7 groups uniquely vehicle-confirmed tolls beneath completed-trip drafts and shows every unresolved toll once under **Needs review**. Mapped tolls outside completed trips appear as **Personal/unassigned**. E-ZPass displays requested and observed ranges, in-range records, pages visited, and its terminal reason. Turo invoice checks remove the unverified blocker only when the exact reservation flow was verified. Reload the extension and both tabs after upgrading.
+Version 0.5.0 groups exact trip-query tolls beneath completed trips and reports identifier searches per trip. Select ready trips, keep E-ZPass Transactions active, open the toolbar popup, and choose **Prepare evidence**. Return to Batch to preview evidence, approve each trip, and approve the unchanged batch. Final Turo submission is not enabled in this release.
 
 ## Before relying on a suggestion
 

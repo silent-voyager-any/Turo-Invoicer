@@ -1,6 +1,6 @@
 # Turo Invoicer product plan
 
-Last reviewed: September 6, 2026. Release 0.4.7 completes personal-use terminal collection and normalized Turo toll-invoice verification. Evidence capture and submission remain disabled. This document is the implementation source of truth for the local-first Chrome extension.
+Last reviewed: September 7, 2026. Release 0.5.0 implements trip-first E-ZPass searches, local screenshot evidence, and immutable trip/batch approval. Turo submission remains disabled pending verified upload and final-send fixtures.
 
 The detailed trip-centric discovery, selection, evidence, and batch experience is specified in [TRIP_BATCH_WORKFLOW.md](TRIP_BATCH_WORKFLOW.md).
 
@@ -21,7 +21,7 @@ Help a multi-vehicle Turo host collect NY E-ZPass toll activity, associate each 
 ## User workflow
 
 1. Open the persistent extension dashboard. The toolbar popup only launches the dashboard and shows compact status.
-2. Sync one signed-in Turo history tab and one signed-in E-ZPass transactions tab.
+2. Sync one signed-in Turo history tab and one signed-in E-ZPass transactions tab. Each eligible trip is searched separately by every confirmed active tag and plate.
 3. Review vehicle profiles. Assign tags and plates to Turo vehicle IDs using inclusive effective date ranges; open-ended ranges are allowed.
 4. Resolve unmatched or ambiguous tolls. Exactly one time-and-vehicle-qualified trip is required.
 5. Select a trip draft, switch to the E-ZPass transaction page, expose the relevant rows and required columns, and capture one or more unmodified visible portal screenshots.
@@ -46,7 +46,7 @@ Help a multi-vehicle Turo host collect NY E-ZPass toll activity, associate each 
 - Add `alarms` for 30-day evidence cleanup.
 - Do not add `<all_urls>`, `cookies`, `webRequest`, `debugger`, `downloads`, or remote-code permissions.
 
-## Schema 4
+## Schema 5
 
 ```json
 {
@@ -122,11 +122,11 @@ Invoice draft states are `needs_mapping`, `needs_evidence`, `ready`, `approved`,
 
 - Stable terminal Turo history, bounded reservation details, one temporary invoice-status tab, existing-Tolls detection, 90-day eligibility gating, and resilient E-ZPass accessible pagination with transient-placeholder handling.
 
-### M2 — Evidence capture
+### M2 — Evidence capture — complete in 0.5.0
 
 - Explicit active-tab authorization, row targeting, unmodified PNG capture, IndexedDB storage, hashing, previews, retention, and quota/error handling.
 
-### M3 — Invoice drafts
+### M3 — Invoice drafts — approval portion complete in 0.5.0
 
 - Per-trip grouping, eligibility/deadline checks, duplicate ledger, immutable batch review, and exportable diagnostics.
 

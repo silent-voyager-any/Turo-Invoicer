@@ -4,7 +4,7 @@ A local-first Chrome extension that helps Turo hosts reconcile NY E-ZPass toll a
 
 The extension observes data loaded in your signed-in browser tabs, matches toll timestamps to trip intervals, and presents suggestions for review. It does not require a server, store portal passwords, or submit reimbursement claims.
 
-> **Status: personal-use reconciliation release, version 0.4.7.** The extension proves Turo history completion, paginates the E-ZPass transaction history, verifies existing Turo toll invoices, and groups confirmed toll matches beneath eligible trips. Evidence capture and reimbursement submission remain disabled.
+> **Status: evidence-ready personal release, version 0.5.0.** The extension verifies Turo trips, searches E-ZPass per trip and exact confirmed identifier, groups matches, captures visible evidence locally, and requires individual plus immutable batch approval. Reimbursement submission remains disabled pending verified upload fixtures.
 
 ## Features
 
@@ -19,13 +19,13 @@ The extension observes data loaded in your signed-in browser tabs, matches toll 
 - Local snapshots, atomic two-source sync, and a clear-data control.
 - No backend uploads, analytics, remote scripts, or automatic claim submission.
 
-## Version 0.4.7 update
+## Version 0.5.0 update
 
 E-ZPass pagination now follows the portal's visible accessible pager, ignores the transient “No transactions found” placeholder during page changes, and selects 100 rows per page when available. Turo history is accepted only with stable numeric reservation cards and its terminal footer. A single temporary inactive Turo tab checks each completed reservation's invoice hub, deduplicated invoice-detail pages, and toll-request eligibility; it is always closed after verification. Only normalized status metadata is stored.
 
 Version 0.4.1 introduced the vehicle-mapping workspace:
 
-Vehicle cards now show the discovered name and registration plate while labeling the numeric Turo vehicle ID as an internal reference, never an E-ZPass tag. Confirmed tags and plates compare exact canonical forms: formatting separators and an explicit plate-state prefix are ignored, but leading zeros remain significant. Needs review shows each unresolved toll once and can prefill—never silently save—a mapping for its time-matched vehicle. Schema 4 data migrates without clearing fleet assignments.
+Vehicle cards retain exact dated plate/tag assignments. Sync now applies each eligible trip's dates and every active confirmed identifier to E-ZPass, follows each filtered pager, and restores the original portal filters. Selected trips can capture unmodified PNG evidence from the explicitly active E-ZPass tab; blobs remain in IndexedDB and approvals are revision-bound.
 
 The version 0.2.3 E-ZPass behavior remains in place:
 

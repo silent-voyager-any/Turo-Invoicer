@@ -1,6 +1,6 @@
 # Trip-centric toll reconciliation and batch workflow
 
-Last reviewed: September 6, 2026. Version 0.4.7 implements the schema-4 trip workspace, vehicle cards, canonical tag/plate mapping, terminal Turo/E-ZPass collection proofs, normalized Turo toll-invoice status, nested confirmed tolls, four dashboard pages, and persistent selection. Evidence and submission remain required behavior rather than completed capabilities.
+Last reviewed: September 7, 2026. Version 0.5.0 replaces broad toll-history crawling with exact trip-first tag/plate searches and adds local evidence plus individual and immutable batch approval. Submission remains fail-closed pending verified upload fixtures.
 
 ## Goal
 
@@ -53,15 +53,15 @@ The default lookback is 90 days from trip end. The collector stops at a configur
 
 ### 3. Collect all relevant E-ZPass tolls
 
-After eligible trips are known, the E-ZPass collector derives the required date span from the earliest trip start through the latest trip end, including the selected grace period. It then:
+After eligible trips are known, the E-ZPass collector creates one exact search for every active confirmed tag and plate on each trip. It then:
 
 1. Uses the signed-in `/ezpass/dashboard/transactions` tab.
-2. Requests every verified transaction page/cursor for that span, chunking the range only when required by the portal.
+2. Applies the trip's start/end calendar dates, Toll type, and exact tag/plate filter, then reads every page of that small result set.
 3. Collects toll postings identified by either tag ID or plate number.
-4. Excludes credits, deposits, payments, replenishments, refunds, adjustments, duplicates, and incomplete timestamps.
+4. Excludes credits, deposits, payments, replenishments, refunds, adjustments, duplicates, and incomplete timestamps; Lane Txn ID is the stable key.
 5. Reports page count, raw row count, accepted toll count, ignored non-toll count, and completeness.
 
-The extension must not claim **All tolls loaded** unless it reached the verified final page for every requested date chunk. A partial E-ZPass result is viewable but cannot be submitted.
+The extension must not claim **All identifiers searched** unless every trip/identifier query reached its verified final page and the original filters were restored. A partial run never replaces the previous complete snapshot.
 
 ### 4. Build trip cards
 
