@@ -144,6 +144,82 @@ test("distinguishes duplicate and missing labelled filter controls", () => {
   assert.throws(() => api.testing.transactionFilterControls([fixture.start, fixture.end]), /Tag\/Plate # filter was not found/);
 });
 
+function identifierFixture({ kind = "tag", canonicalIdentifier = "000123", optionText = "E-ZPass Tag: 000123",
+  delayed = false, ambiguous = false } = {}) {
+  let options = [];
+  const combo = new TestInputElement();
+  Object.assign(combo, visibleElement({ events: [], readOnly: false, disabled: false,
+    focus() {}, select() {}, setSelectionRange() {},
+    dispatchEvent(event) {
+      this.events.push(event);
+      if (delayed && event.type === "input" && this.value === canonicalIdentifier) {
+        setTimeout(() => { options = makeOptions(); }, 25);
+      }
+      return true;
+    },
+    click() { if (!delayed) options = makeOptions(); }
+  }));
+  combo.value = "All tags";
+  const makeOption = (text) => visibleElement({ textContent: text, click() { combo.value = text; } });
+  const makeOptions = () => [makeOption(optionText), ...(ambiguous ? [makeOption(`${optionText} (duplicate)`)] : [])];
+  context.document = {
+    body: { textContent: "" },
+    querySelector: () => null,
+    querySelectorAll: (selector) => selector === '[role="option"]' ? options : []
+  };
+  return { combo, query: { kind, canonicalIdentifier, identifier: canonicalIdentifier } };
+}
+
+test("matches exact identifiers inside decorated tag and plate option labels", () => {
+  let fixture = identifierFixture();
+  fixture.combo.click();
+  assert.equal(api.testing.uniqueIdentifierOption(fixture.query).textContent, "E-ZPass Tag: 000123");
+  assert.equal(api.testing.optionIdentifierCandidates({ textContent: "Tag 123" }, "tag").has("000123"), false,
+    "leading zeros remain significant");
+
+  fixture = identifierFixture({ kind: "plate", canonicalIdentifier: "ABC123",
+    optionText: "License Plate • NY: ABC-123" });
+  fixture.combo.click();
+  assert.equal(api.testing.uniqueIdentifierOption(fixture.query).textContent, "License Plate • NY: ABC-123");
+});
+
+test("types an exact identifier to reveal a delayed or virtualized option", async () => {
+  const fixture = identifierFixture({ delayed: true });
+  await api.testing.selectIdentifier(fixture.combo, fixture.query);
+  assert.equal(fixture.combo.value, "E-ZPass Tag: 000123");
+  assert.ok(fixture.combo.events.some((event) => event.type === "beforeinput"));
+  assert.ok(fixture.combo.events.some((event) => event.type === "input"));
+});
+
+test("rejects ambiguous exact identifier options", async () => {
+  const fixture = identifierFixture({ ambiguous: true });
+  await assert.rejects(api.testing.selectIdentifier(fixture.combo, fixture.query), /option is ambiguous/);
+});
+
+test("validates tag and plate results against their corresponding fields", () => {
+  const record = { id: "lane-1", tagId: "000123", plate: "ABC-123", tagOrPlate: null };
+  assert.equal(api.testing.recordMatchesQuery(record, { kind: "tag", canonicalIdentifier: "000123" }), true);
+  assert.equal(api.testing.recordMatchesQuery(record, { kind: "plate", canonicalIdentifier: "ABC123" }), true);
+  assert.equal(api.testing.recordMatchesQuery(record, { kind: "plate", canonicalIdentifier: "000123" }), false,
+    "a plate query must not fall back to the dedicated tag field");
+});
+
+test("merges duplicate lane transactions across separate tag and plate searches", () => {
+  const records = new Map();
+  const record = { id: "lane-1", timestamp: "09/01/2026 12:00 PM", plaza: "Example", amount: "-$1.00",
+    tagId: "000123", plate: "ABC-123" };
+  const tagQuery = { queryId: "1001:tag:000123", reservationId: "1001", vehicleId: "car1", kind: "tag",
+    identifier: "000123" };
+  const plateQuery = { queryId: "1001:plate:ABC123", reservationId: "1001", vehicleId: "car1", kind: "plate",
+    identifier: "NY:ABC-123" };
+  assert.equal(api.testing.mergeQueryRecord(records, record, tagQuery), true);
+  assert.equal(api.testing.mergeQueryRecord(records, record, plateQuery), false);
+  assert.equal(records.size, 1);
+  assert.equal(records.get("lane-1").queryId, tagQuery.queryId);
+  assert.throws(() => api.testing.mergeQueryRecord(records, { ...record, amount: "-$2.00" }, plateQuery),
+    /conflicting duplicate Lane Txn IDs/);
+});
+
 function typedDateFixture({ execCommand = true, replaceInput = false, readOnly = false, disabled = false,
   rejectValue = false, invalid = false } = {}) {
   let active = null, calendarClicks = 0;

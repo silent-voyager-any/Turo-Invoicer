@@ -569,6 +569,81 @@
     await sleep(80);
   }
 
+  function optionIdentifierCandidates(node, kind) {
+    const values = [normalizedText(node), node?.value, node?.getAttribute?.("value"),
+      node?.getAttribute?.("data-value"), node?.getAttribute?.("aria-label"), node?.getAttribute?.("title")];
+    const candidates = new Set();
+    for (const value of values) {
+      const compact = compactText(value);
+      if (!compact) continue;
+      const withoutLabels = compact.replace(/\b(?:e-?zpass|transponder|tag|license|plate|number|no)\b/gi, " ");
+      for (const part of [compact, withoutLabels, ...compact.split(/[|\u2022\u00b7(),;]+/),
+        ...withoutLabels.split(/\s+/)]) {
+        const canonical = portalCanonical(kind, part);
+        if (canonical) candidates.add(canonical);
+      }
+    }
+    return candidates;
+  }
+
+  function uniqueIdentifierOption(query) {
+    const expected = String(query.canonicalIdentifier || "");
+    const matches = controls(document, '[role="option"]').filter((node) =>
+      isVisible(node) && optionIdentifierCandidates(node, query.kind).has(expected));
+    if (matches.length > 1) throw new Error("E-ZPass exact tag/plate option is ambiguous.");
+    return matches[0] || null;
+  }
+
+  function identifierInput(combo) {
+    if (globalThis.HTMLInputElement && combo instanceof globalThis.HTMLInputElement) return combo;
+    const nested = combo?.querySelector?.("input");
+    return globalThis.HTMLInputElement && nested instanceof globalThis.HTMLInputElement ? nested : null;
+  }
+
+  async function typeIdentifierFilter(combo, query) {
+    const input = identifierInput(combo);
+    if (!input || isDisabled(input) || input.readOnly || input.getAttribute?.("aria-readonly") === "true") return false;
+    const value = String(query.canonicalIdentifier || "");
+    input.focus?.();
+    input.select?.();
+    input.setSelectionRange?.(0, String(input.value || "").length);
+    if (typeof document.execCommand === "function") {
+      try {
+        document.execCommand("delete", false);
+        if (document.execCommand("insertText", false, value)) return true;
+      } catch { /* Fall through to the native setter. */ }
+    }
+    const setter = nativeInputSetter(input);
+    dispatchInputEvent(input, "beforeinput", { inputType: "deleteContentBackward", data: null });
+    setter.call(input, "");
+    dispatchInputEvent(input, "input", { inputType: "deleteContentBackward", data: null });
+    dispatchInputEvent(input, "beforeinput", { inputType: "insertText", data: value });
+    setter.call(input, value);
+    dispatchInputEvent(input, "input", { inputType: "insertText", data: value });
+    dispatchInputEvent(input, "change");
+    return true;
+  }
+
+  async function selectIdentifier(combo, query) {
+    await continueActiveSessionIfNeeded();
+    combo.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    await portalAction(combo, "exact tag/plate menu");
+    await sleep(80);
+    let option = uniqueIdentifierOption(query);
+    if (!option) {
+      const typed = await typeIdentifierFilter(combo, query);
+      option = await waitFor(() => uniqueIdentifierOption(query), typed ? 5000 : 2500,
+        "E-ZPass exact tag/plate option is unavailable.");
+    }
+    await portalAction(option, "exact tag/plate selection");
+    await waitFor(() => {
+      let candidate = combo;
+      try { candidate = transactionFilterControls(visibleDateInputs()).identifier; } catch { /* Use the original node. */ }
+      return optionIdentifierCandidates(candidate, query.kind).has(String(query.canonicalIdentifier || ""));
+    }, 2500, "E-ZPass did not accept the exact tag/plate selection.");
+    await sleep(80);
+  }
+
   function clearFilterButton() {
     const matches = buttons(transactionMain()).filter((node) => isVisible(node) && /^clear all$/i.test(normalizedText(node)));
     if (matches.length !== 1) throw new Error("E-ZPass Clear All control is missing or ambiguous.");
@@ -601,11 +676,11 @@
     await commitDateInput(inputs[0], query.startDate);
     await sleep(100);
     await commitDateInput(reacquireDateInput(endIdentity) || inputs[1], query.endDate);
-    const filters = transactionFilterControls(visibleDateInputs());
+    let filters = transactionFilterControls(visibleDateInputs());
     await selectCombo(filters.type, (value) => /^toll$/i.test(value), "Toll type");
-    const expected = String(query.canonicalIdentifier || "");
-    await selectCombo(filters.identifier, (value) => portalCanonical(query.kind, value) === expected,
-      "exact tag/plate");
+    filters = transactionFilterControls(visibleDateInputs());
+    await selectIdentifier(filters.identifier, query);
+    filters = transactionFilterControls(visibleDateInputs());
     const search = filters.search;
     await waitFor(() => !isDisabled(search) && search, 5000, "E-ZPass Search remained disabled after applying trip filters.");
     await portalAction(search, "trip filter search");
@@ -614,7 +689,7 @@
     const fits = (candidate) => candidate.noTransactions || candidate.records.every((record) => {
       const stamp = localTimestampKey(rawTimestamp(record));
       const date = stamp ? `${stamp.slice(0, 4)}-${stamp.slice(4, 6)}-${stamp.slice(6, 8)}` : null;
-      return portalCanonical(query.kind, record.tagId || record.plate || record.tagOrPlate) === expected &&
+      return recordMatchesQuery(record, query) &&
         date >= query.startDate && date <= query.endDate;
     });
     if (!fits(page)) page = await settledPage(readDom, parseRecord, page.signature);
@@ -635,10 +710,14 @@
     await commitDateInput(inputs[0], snapshot.startDate);
     await sleep(100);
     await commitDateInput(reacquireDateInput(endIdentity) || inputs[1], snapshot.endDate);
-    const filters = transactionFilterControls(visibleDateInputs());
-    if (snapshot.type && !/^all$/i.test(snapshot.type)) await selectCombo(filters.type, (value) => value === snapshot.type, "restored Type");
+    let filters = transactionFilterControls(visibleDateInputs());
+    if (snapshot.type && !/^all$/i.test(snapshot.type)) {
+      await selectCombo(filters.type, (value) => value === snapshot.type, "restored Type");
+      filters = transactionFilterControls(visibleDateInputs());
+    }
     if (snapshot.identifier && !/^all tags$/i.test(snapshot.identifier)) {
       await selectCombo(filters.identifier, (value) => value === snapshot.identifier, "restored tag/plate");
+      filters = transactionFilterControls(visibleDateInputs());
     }
     const search = filters.search;
     await waitFor(() => !isDisabled(search) && search, 5000, "E-ZPass Search remained disabled while restoring filters.");
@@ -662,6 +741,30 @@
     if (kind === "plate") text = text.replace(/^[A-Z]{2}\s*[:|]\s*/, "");
     return text.replace(/[^A-Z0-9]/g, "");
   };
+
+  function recordMatchesQuery(record, query) {
+    const values = query.kind === "tag" ? [record.tagId, record.tagOrPlate] : [record.plate, record.tagOrPlate];
+    return values.some((value) => portalCanonical(query.kind, value) === String(query.canonicalIdentifier || ""));
+  }
+
+  function queryNeutralRecord(record) {
+    const copy = { ...record };
+    for (const key of ["queryId", "queryReservationId", "queryVehicleId", "queryKind", "queryIdentifier"]) delete copy[key];
+    return copy;
+  }
+
+  function mergeQueryRecord(records, record, query) {
+    const next = { ...record, queryId: query.queryId, queryReservationId: query.reservationId, queryVehicleId: query.vehicleId,
+      queryKind: query.kind, queryIdentifier: query.identifier };
+    const key = String(next.id || "");
+    if (!key) throw new Error("E-ZPass filtered result is missing Lane Txn ID.");
+    const prior = records.get(key);
+    if (prior && JSON.stringify(queryNeutralRecord(prior)) !== JSON.stringify(queryNeutralRecord(next))) {
+      throw new Error("E-ZPass returned conflicting duplicate Lane Txn IDs.");
+    }
+    if (!prior) records.set(key, next);
+    return !prior;
+  }
 
   async function collectFilteredPages(firstPage, query, readDom, parseRecord, onEvidencePage) {
     let page = firstPage;
@@ -700,18 +803,8 @@
         pages += result.pageCount; rawCount += result.rawCount;
         let accepted = 0;
         for (const record of result.records) {
-          const actual = portalCanonical(query.kind, record.tagId || record.plate || record.tagOrPlate);
-          if (actual !== query.canonicalIdentifier) continue;
-          const next = { ...record, queryId: query.queryId, queryReservationId: query.reservationId, queryVehicleId: query.vehicleId,
-            queryKind: query.kind, queryIdentifier: query.identifier };
-          const key = String(next.id || "");
-          if (!key) throw new Error("E-ZPass filtered result is missing Lane Txn ID.");
-          const prior = records.get(key);
-          if (prior && JSON.stringify({ ...prior, queryReservationId: null, queryVehicleId: null, queryKind: null, queryIdentifier: null }) !==
-              JSON.stringify({ ...next, queryReservationId: null, queryVehicleId: null, queryKind: null, queryIdentifier: null })) {
-            throw new Error("E-ZPass returned conflicting duplicate Lane Txn IDs.");
-          }
-          if (!prior) records.set(key, next);
+          if (!recordMatchesQuery(record, query)) continue;
+          mergeQueryRecord(records, record, query);
           accepted += 1;
         }
         reports.push({ queryId: query.queryId, reservationId: query.reservationId, kind: query.kind,
@@ -745,6 +838,8 @@
       portalDate, normalizedDateDigits, maskedDatePrefix, dateInputDiagnostics, commitDateInput,
       sessionExpiryDialogs, continueActiveSessionIfNeeded,
       accessibleControlName, namedCombos, transactionFilterControls,
+      optionIdentifierCandidates, uniqueIdentifierOption, typeIdentifierFilter, selectIdentifier,
+      recordMatchesQuery, mergeQueryRecord,
       snapshotFilters, applyQuery, restoreFilters }),
     constants: Object.freeze({ MAX_TOTAL_PAGES })
   });
