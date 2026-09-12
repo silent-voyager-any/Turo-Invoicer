@@ -81,7 +81,7 @@
   }
 
   createCapture("ezpass", parseToll, readDom, {
-    collectorRevision: "0.5.7-trip-query-9",
+    collectorRevision: "0.5.8-trip-query-10",
     isPageAllowed: (path) => path === TRANSACTIONS_PATH,
     pageMessage: "Open https://www.e-zpassny.com/ezpass/dashboard/transactions and apply your activity filters before syncing.",
     waitTimeoutMs: 20000,

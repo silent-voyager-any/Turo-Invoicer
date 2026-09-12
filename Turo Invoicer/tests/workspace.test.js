@@ -44,6 +44,34 @@ test("an unavailable portal identifier blocks only its affected trip", () => {
   assert.equal(result.drafts[0].selectable, false);
 });
 
+test("a partial run leaves completed trips selectable but blocks the stalled trip", () => {
+  const other = { ...trip, id: "trip-2" };
+  const result = workspace({
+    trips: [trip, other],
+    reconciliation: { matched: [
+      { trip, toll, vehicleConfirmed: true },
+      { trip: other, toll: { ...toll, id: "toll-2" }, vehicleConfirmed: true }
+    ] },
+    tripEligibility: { "trip-1": { status: "eligible_uncharged" }, "trip-2": { status: "eligible_uncharged" } },
+    collectionRuns: { turo: { complete: true }, ezpass: { complete: false, queryReports: [
+      { reservationId: "trip-1", status: "complete", complete: true },
+      { reservationId: "trip-2", status: "search_incomplete", complete: false, reason: "search_not_applied" }
+    ] } }
+  });
+  assert.equal(result.drafts.find((draft) => draft.reservationId === "trip-1").selectable, true);
+  const stalled = result.drafts.find((draft) => draft.reservationId === "trip-2");
+  assert.equal(stalled.selectable, false);
+  assert.ok(stalled.blockingReasons.includes("search_incomplete"));
+});
+
+test("stale evidence and prior approvals cannot survive a source refresh", () => {
+  const prior = workspace({ evidence: [{ id: "shot", hash: "abc", reservationId: "trip-1", coveredTollIds: ["toll-1"] }] }).drafts;
+  const refreshed = workspace({ previousDrafts: prior, evidence: [{ id: "shot", hash: "abc", status: "stale",
+    reservationId: "trip-1", coveredTollIds: ["toll-1"] }] });
+  assert.equal(refreshed.drafts[0].evidenceComplete, false);
+  assert.equal(refreshed.drafts[0].batchReady, false);
+});
+
 test("sent toll fingerprints are not attached again", () => {
   const result = workspace({ submissionLedger: [{ status: "sent", tollIds: ["toll-1"] }] });
   assert.equal(result.drafts[0].tolls.length, 0);

@@ -23,7 +23,7 @@ async function popup() {
   };
   vm.runInNewContext(readFileSync("popup.js", "utf8"), { document, chrome, window: { close: () => { closed = true; } }, Intl, Date, Object });
   await new Promise((resolve) => setImmediate(resolve));
-  return { elements, opened, closed: () => closed };
+  return { elements, opened, state, closed: () => closed };
 }
 
 test("popup launches the persistent dashboard and reports saved counts", async () => {
@@ -40,6 +40,14 @@ test("popup retains a compact sync action", async () => {
   await env.elements.get("#syncButton").listeners.click();
   assert.match(env.elements.get("#status").textContent, /Sync complete/);
   assert.equal(env.elements.get("#syncButton").disabled, false);
+});
+
+test("popup clearly labels a saved partial sync", async () => {
+  const env = await popup();
+  env.state.collectionRuns = { ezpass: { complete: false } };
+  await env.elements.get("#syncButton").listeners.click();
+  assert.match(env.elements.get("#status").textContent, /Partial sync saved/);
+  assert.match(env.elements.get("#status").textContent, /cannot enter a batch/);
 });
 
 test("popup exposes the explicit active-tab evidence action", async () => {

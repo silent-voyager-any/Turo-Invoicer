@@ -81,6 +81,10 @@ If rows remain unsupported, provide only the page path, column headings, and num
 
 ## Local debugging
 
+### Search incomplete after filtering
+
+Version 0.5.8 waits for the E-ZPass table to change, a fresh observed response, or a loading transition after Search. It then requires stable matching rows or a sustained empty result. If a search still stalls after one safe retry, the affected trip shows `search_incomplete` with a sanitized reason such as `search_not_applied`, `filters_not_confirmed`, `loading`, or `page_not_advanced`. Other verified trip results remain visible, but the incomplete trip cannot enter evidence or a batch. Reload the E-ZPass Transactions tab and retry sync. A route change, ambiguous controls, or failed filter restoration still preserves the prior state instead of saving a partial run.
+
 On `chrome://extensions`, inspect extension errors and open the service-worker inspector. Inspect the portal DOM locally to locate card boundaries, stable IDs, and full timestamp fields. Inspect the popup to diagnose rendering errors.
 
 Separate the problem into: tab detection -> script presence -> raw capture -> adapter fields -> async reply -> normalization -> matching. Do not log or share complete response payloads to shortcut that process.

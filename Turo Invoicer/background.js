@@ -8,7 +8,7 @@ const PATTERNS = { turo: ["https://turo.com/*"], ezpass: ["https://www.e-zpassny
 const MAX_RECORDS = 5000;
 const HISTORY_PATH = "/us/en/trips/history";
 const TRANSACTIONS_PATH = "/ezpass/dashboard/transactions";
-const EZPASS_COLLECTOR_REVISION = "0.5.7-trip-query-9";
+const EZPASS_COLLECTOR_REVISION = "0.5.8-trip-query-10";
 const TURO_INVOICE_ADAPTER_REVISION = "0.4.7-invoice-dom-1";
 const STANDARD_TOLL_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const TRUSTED_PAGES = new Set(["popup.html", "dashboard.html"]);
@@ -43,6 +43,7 @@ const emptyState = () => ({
     turo: { complete: false, pageCount: 0, recordCount: 0, updatedAt: null, warning: "Not collected." },
     ezpass: { complete: false, pageCount: 0, recordCount: 0, updatedAt: null, warning: "Not collected." }
   },
+  lastCompleteSnapshot: null,
   tripEligibility: {},
   invoiceDrafts: [],
   selectionSummary: { tripCount: 0, tollCount: 0, totalCents: 0 },
@@ -297,9 +298,35 @@ async function collect(source, request = {}) {
       throw new Error("Portal left the supported data page during sync. Return and retry.");
     }
     let records = sanitizeRecords(source, response.records);
-    const verifiedEmpty = source === "ezpass" && response.complete === true &&
-      (response.completeForRange === true || (Array.isArray(response.queryReports) &&
-        response.queryReports.length > 0 && response.queryReports.every((report) => report.status === "identifier_unavailable")));
+    const reports = source === "ezpass" && Array.isArray(response.queryReports)
+      ? response.queryReports.slice(0, 500).map((report) => ({
+        queryId: typeof report?.queryId === "string" ? report.queryId.slice(0, 200) : "",
+        reservationId: typeof report?.reservationId === "string" ? report.reservationId.slice(0, 20) : "",
+        kind: ["tag", "plate"].includes(report?.kind) ? report.kind : null,
+        pageCount: Number.isInteger(report?.pageCount) && report.pageCount >= 0 ? report.pageCount : 0,
+        rawCount: Number.isInteger(report?.rawCount) && report.rawCount >= 0 ? report.rawCount : 0,
+        recordCount: Number.isInteger(report?.recordCount) && report.recordCount >= 0 ? report.recordCount : 0,
+        complete: report?.complete === true,
+        status: ["complete", "identifier_unavailable", "search_incomplete"].includes(report?.status) ? report.status : null,
+        reason: ["run_deadline", "search_not_applied", "loading", "filters_not_confirmed",
+          "empty_not_confirmed", "page_not_advanced"].includes(report?.reason) ? report.reason : null
+      })) : [];
+    const expectedQueries = source === "ezpass" ? request.queryJobs || [] : [];
+    if (source === "ezpass" && expectedQueries.length && response.complete !== true) {
+      const expected = new Set(expectedQueries.map((query) => query.queryId));
+      const received = new Set(reports.map((report) => report.queryId));
+      if (reports.length !== expected.size || received.size !== expected.size ||
+          [...received].some((id) => !expected.has(id)) ||
+          reports.some((report) => !["complete", "identifier_unavailable", "search_incomplete"].includes(report.status))) {
+        throw new Error("E-ZPass partial search report was incomplete or inconsistent; prior results retained.");
+      }
+      const successful = new Set(reports.filter((report) => report.status === "complete" && report.complete === true).map((report) => report.queryId));
+      if (records.some((record) => !successful.has(record.queryId))) {
+        throw new Error("E-ZPass partial result included an unverified search; prior results retained.");
+      }
+    }
+    const verifiedEmpty = source === "ezpass" && (response.completeForRange === true ||
+      (reports.length > 0 && reports.every((report) => ["complete", "identifier_unavailable", "search_incomplete"].includes(report.status))));
     if (!records.length && !verifiedEmpty) throw new Error("No supported records captured. Open the data page and reload it.");
     let warning = response.warning || null;
     if (source === "turo") {
@@ -321,7 +348,7 @@ async function collect(source, request = {}) {
       observedRange: response.observedRange || null,
       ordering: ["descending", "unverified"].includes(response.ordering) ? response.ordering : "unverified",
       lastPage: Number.isInteger(response.lastPage) && response.lastPage > 0 ? response.lastPage : null,
-      queryReports: Array.isArray(response.queryReports) ? response.queryReports.slice(0, 500) : []
+      queryReports: reports
     };
   } catch (error) {
     return { source, ok: false, error: error.message || "Reload the portal tab after installation." };
@@ -377,6 +404,16 @@ async function runSync() {
 
 async function commitSync(state, turo, ezpass, range) {
   const now = new Date().toISOString();
+  // Keep the last fully verified normalized data separately. A partial run is
+  // visible for review but cannot silently replace the only complete copy.
+  if (state.collectionRuns?.turo?.complete === true && state.collectionRuns?.ezpass?.complete === true &&
+      state.collectionRuns?.ezpass?.completeForRange === true) {
+    state.lastCompleteSnapshot = structuredClone({ sources: state.sources, collectionRuns: state.collectionRuns,
+      tripEligibility: state.tripEligibility, lastSync: state.lastSync });
+  }
+  state.batchApproval = null;
+  state.invoiceDrafts = (state.invoiceDrafts || []).map((draft) => ({ ...draft, tripApproved: false, approvedRevision: null }));
+  state.evidence = (state.evidence || []).map((item) => ({ ...item, status: item.status === "deleted" ? "deleted" : "stale" }));
   for (const result of [turo, ezpass]) {
     state.sources[result.source] = { records: result.records, updatedAt: now };
     state.collectionRuns[result.source] = {

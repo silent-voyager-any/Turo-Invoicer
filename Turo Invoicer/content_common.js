@@ -273,7 +273,8 @@
               visibleIds.forEach((id) => remaining.delete(id));
             }
           } : null;
-          Promise.resolve(options.collect({ range: message.range, queryJobs: message.queryJobs, parseRecord, readDom, onEvidencePage }))
+          Promise.resolve(options.collect({ range: message.range, queryJobs: message.queryJobs, parseRecord, readDom,
+            onEvidencePage, getNetworkRevision: () => networkMessages }))
             .then((result) => collectReply({ ok: true, source, pagePath: capturePath, ...result }))
             .catch((error) => collectReply({ ok: false, source, error: error?.message || "Portal collection failed." }));
           return true;

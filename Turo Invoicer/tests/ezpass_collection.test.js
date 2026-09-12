@@ -21,6 +21,81 @@ vm.runInContext(readFileSync("ezpass_collection.js", "utf8"), context);
 const api = context.EzpassCollection;
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
+const searchQuery = { kind: "tag", canonicalIdentifier: "00123", startDate: "2026-08-01", endDate: "2026-08-02" };
+function searchFixture(initialRows, initialText = "") {
+  let rows = initialRows, text = initialText, revision = 0, loading = false;
+  const main = { get innerText() { return text; }, querySelectorAll(selector) {
+    return selector.includes("aria-busy") && loading ? [visibleElement()] : [];
+  } };
+  const oldQuery = context.document.querySelector;
+  context.document.querySelector = () => main;
+  const readDom = (add) => rows.forEach(add);
+  const parseRecord = (row) => row.activity === "CREDIT" ? null : row;
+  return { readDom, parseRecord, getNetworkRevision: () => revision,
+    set(nextRows, nextText = "", nextLoading = false) { rows = nextRows; text = nextText; loading = nextLoading; revision += 1; },
+    restore() { context.document.querySelector = oldQuery; } };
+}
+const searchRow = (id = "lane-1") => ({ transactionId: id, id, timestamp: "08/01/2026 12:00:00",
+  tagId: "00123", amount: "-$4.19", activity: "TOLL POSTING" });
+
+test("search ignores the old table until a post-search transition and accepts delayed filtered rows", async () => {
+  const fixture = searchFixture([{ ...searchRow("old"), tagId: "99999" }]);
+  try {
+    const baseline = api.testing.samplePage(fixture.readDom, fixture.parseRecord);
+    setTimeout(() => fixture.set([searchRow("new")]), 200);
+    const result = await api.testing.waitForSearchResult({ baseline, baselineRevision: 0, query: searchQuery,
+      ...fixture, timeoutMs: 3500 });
+    assert.equal(result.records[0].id, "new");
+  } finally { fixture.restore(); }
+});
+
+test("search accepts identical-looking results only after a fresh response", async () => {
+  const fixture = searchFixture([searchRow()]);
+  try {
+    const baseline = api.testing.samplePage(fixture.readDom, fixture.parseRecord);
+    setTimeout(() => fixture.set([searchRow()]), 100);
+    const result = await api.testing.waitForSearchResult({ baseline, baselineRevision: 0, query: searchQuery,
+      ...fixture, timeoutMs: 3000 });
+    assert.equal(result.records.length, 1);
+  } finally { fixture.restore(); }
+});
+
+test("search rejects unchanged old rows and credit-only rows", async () => {
+  const stale = searchFixture([searchRow()]);
+  try {
+    const baseline = api.testing.samplePage(stale.readDom, stale.parseRecord);
+    await assert.rejects(api.testing.waitForSearchResult({ baseline, baselineRevision: 0, query: searchQuery,
+      ...stale, timeoutMs: 300 }), /search incomplete \(search_not_applied\)/);
+  } finally { stale.restore(); }
+  const credit = searchFixture([searchRow("old")]);
+  try {
+    const baseline = api.testing.samplePage(credit.readDom, credit.parseRecord);
+    credit.set([{ ...searchRow("credit"), activity: "CREDIT" }]);
+    await assert.rejects(api.testing.waitForSearchResult({ baseline, baselineRevision: 0, query: searchQuery,
+      ...credit, timeoutMs: 300 }), /search incomplete \(filters_not_confirmed\)/);
+  } finally { credit.restore(); }
+});
+
+test("search requires a sustained empty state and ignores transient placeholders", async () => {
+  const fixture = searchFixture([searchRow("old")]);
+  try {
+    const baseline = api.testing.samplePage(fixture.readDom, fixture.parseRecord);
+    setTimeout(() => fixture.set([], "No transactions found"), 100);
+    setTimeout(() => fixture.set([searchRow("new")]), 450);
+    const result = await api.testing.waitForSearchResult({ baseline, baselineRevision: 0, query: searchQuery,
+      ...fixture, timeoutMs: 3300 });
+    assert.equal(result.records[0].id, "new");
+  } finally { fixture.restore(); }
+  const empty = searchFixture([searchRow("old")]);
+  try {
+    const baseline = api.testing.samplePage(empty.readDom, empty.parseRecord);
+    setTimeout(() => empty.set([], "No transactions found"), 100);
+    const result = await api.testing.waitForSearchResult({ baseline, baselineRevision: 0, query: searchQuery,
+      ...empty, timeoutMs: 3000 });
+    assert.equal(result.raw.length, 0);
+  } finally { empty.restore(); }
+});
+
 test("validates the worker's E-ZPass date-range contract", () => {
   assert.deepEqual(clone(api.validateRange({ startDate: "2026-08-01", endDate: "2026-08-31" })),
     { startDate: "2026-08-01", endDate: "2026-08-31" });
@@ -513,7 +588,7 @@ test("missing and repeated pagination controls fail safely", async () => {
     [{ id: "two", timestamp: "08/20/2026", amount: "-$2" }]
   ] });
   await assert.rejects(api.collect({ range: { startDate: "2026-08-01", endDate: "2026-08-31" },
-    parseRecord: repeated.parseRecord, readDom: repeated.readDom }), /finish loading|repeated/i);
+    parseRecord: repeated.parseRecord, readDom: repeated.readDom }), /finish loading|repeated|pagination did not settle or advance/i);
 });
 
 test("route changes are attributed to pagination", () => {

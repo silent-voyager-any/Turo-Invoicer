@@ -29,6 +29,7 @@ const identifier = (toll) => toll.tagId || toll.plate || toll.tagOrPlate || "Ide
 const reasonLabel = (reason) => ({
   turo_collection_incomplete: "Turo pagination is incomplete",
   ezpass_collection_incomplete: "E-ZPass pagination is incomplete",
+  search_incomplete: "E-ZPass search incomplete for this trip; retry sync",
   status_unknown: "Turo toll-invoice status is unverified",
   already_charged: "Turo already shows a toll invoice",
   ineligible: "Trip is not eligible",
@@ -111,7 +112,10 @@ function collectionLabel(source, run) {
   const observedText = observed?.startDate && observed?.endDate ? ` · observed ${observed.startDate}–${observed.endDate}` : "";
   const lastPage = source === "ezpass" && run?.lastPage ? ` · last page ${run.lastPage}` : "";
   const ranges = source === "ezpass" ? requestedText + observedText : requestedText;
-  const queries = source === "ezpass" && Array.isArray(run?.queryReports) ? ` · ${run.queryReports.length} identifier searches` : "";
+  const completed = source === "ezpass" ? (run?.queryReports || []).filter((report) => report.status === "complete").length : 0;
+  const incomplete = source === "ezpass" ? (run?.queryReports || []).filter((report) => report.status === "search_incomplete").length : 0;
+  const queries = source === "ezpass" && Array.isArray(run?.queryReports)
+    ? ` · ${completed} completed · ${incomplete} search-incomplete` : "";
   return run?.complete ? `${name} complete · ${run.pageCount || 0} pages · ${run.recordCount || 0} records${queries}${lastPage}${ranges}`
     : `${name} incomplete · ${run?.recordCount || 0} loaded${lastPage}${ranges}`;
 }
@@ -120,7 +124,8 @@ function coverageLabel(runs = {}) {
   if (!ezpass) return { text: "Trip searches unavailable", warning: true };
   if (ezpass.complete !== true || ezpass.completeForRange !== true) {
     const unavailable = (ezpass.queryReports || []).filter((report) => report.status === "identifier_unavailable").length;
-    return { text: unavailable
+    const incomplete = (ezpass.queryReports || []).filter((report) => report.status === "search_incomplete").length;
+    return { text: incomplete ? `${incomplete} trip identifier search${incomplete === 1 ? " is" : "es are"} incomplete; verified trips remain reviewable` : unavailable
       ? `${unavailable} configured tag/plate ${unavailable === 1 ? "assignment is" : "assignments are"} unavailable in E-ZPass; affected trips need review`
       : "One or more trip identifier searches are incomplete", warning: true };
   }
@@ -153,9 +158,10 @@ function tripCard(draft, state) {
   const reports = state.collectionRuns?.ezpass?.queryReports || [];
   const tripReports = reports.filter((report) => String(report.reservationId) === String(draft.reservationId));
   const unavailableQueries = tripReports.filter((report) => report.status === "identifier_unavailable").length;
+  const incompleteQueries = tripReports.filter((report) => report.status === "search_incomplete").length;
   const completedQueries = tripReports.filter((report) => report.complete === true).length;
   const queryText = tripReports.length
-    ? `${completedQueries}/${tripReports.length} identifiers searched · ${unavailableQueries} unavailable · ${tripReports.reduce((sum, item) => sum + (item.recordCount || 0), 0)} filtered toll rows`
+    ? `${completedQueries}/${tripReports.length} identifiers searched · ${incompleteQueries} search-incomplete · ${unavailableQueries} unavailable · ${tripReports.reduce((sum, item) => sum + (item.recordCount || 0), 0)} filtered toll rows`
     : "No confirmed identifier search completed";
   card.append(heading, element("p", "internal-id", `Turo internal vehicle ID: ${draft.vehicleId} — not an E-ZPass tag`), dates,
     element("p", "muted", queryText), tolls, element("p", "", `${draft.selectedTollIds.length} selected · ${moneyCents(draft.totalCents)} · ${draft.evidenceIds?.length || 0} evidence images`));
@@ -164,6 +170,9 @@ function tripCard(draft, state) {
       String(item.vehicleId) === String(draft.vehicleId) && item.kind === report.kind &&
       `${draft.reservationId}:${item.kind}:${item.canonicalIdentifier}` === report.queryId);
     card.append(element("p", "muted", `E-ZPass does not list configured ${report.kind} ${assignment?.identifier || "(assignment unavailable)"}. Update it on Vehicles.`));
+  }
+  for (const report of tripReports.filter((item) => item.status === "search_incomplete")) {
+    card.append(element("p", "muted", `E-ZPass ${report.kind} search incomplete (${report.reason || "unconfirmed results"}). Retry sync; this trip cannot be selected.`));
   }
   if (draft.blockingReasons?.length) {
     const reasons = draft.blockingReasons.map((reason) =>
@@ -179,7 +188,7 @@ function batchCard(draft, state) {
   const label = element("label", "trip-title"); label.append(approval, element("strong", "", `Trip ${draft.reservationId}`));
   row.append(label, element("span", `pill ${draft.tripApproved ? "ready" : "warning"}`, draft.tripApproved ? "Approved" : draft.batchReady ? "Approval required" : "Evidence incomplete"));
   card.append(row, element("p", "", `${draft.selectedTollIds.length} tolls · ${moneyCents(draft.totalCents)} · revision ${draft.revisionHash}`));
-  const evidence = (state.evidence || []).filter((item) => String(item.reservationId) === String(draft.reservationId));
+  const evidence = (state.evidence || []).filter((item) => String(item.reservationId) === String(draft.reservationId) && item.status !== "stale" && item.status !== "deleted");
   const gallery = element("div", "evidence-gallery");
   for (const item of evidence) {
     const figure = element("figure", "evidence-item");
@@ -301,7 +310,7 @@ el.tollReviewList.addEventListener("click", handleMappingPrefill);
 el.tripsList.addEventListener("change", async (event) => { const action = event.target?.dataset?.action; if (!action) return; try { const message = action === "trip" ? { type: "SET_TRIP_SELECTION", reservationId: event.target.dataset.reservationId, selected: event.target.checked } : { type: "SET_TOLL_SELECTION", reservationId: event.target.dataset.reservationId, tollId: event.target.dataset.tollId, selected: event.target.checked }; const { state } = await send(message); render(state); } catch (error) { setStatus(error.message, "error"); } });
 el.selectAllButton.addEventListener("click", async () => { try { const { state } = await send({ type: "SELECT_ALL_READY", selected: true }); render(state); setStatus("All ready trips selected."); } catch (error) { setStatus(error.message, "error"); } });
 el.graceMinutes.addEventListener("change", async () => { try { const { state } = await send({ type: "UPDATE_SETTINGS", settings: { graceMinutes: Number(el.graceMinutes.value) } }); render(state); setStatus("Grace period updated; selections were revalidated."); } catch (error) { setStatus(error.message, "error"); } });
-el.syncButton.addEventListener("click", async () => { el.syncButton.disabled = true; setStatus("Collecting signed-in portal records…", "busy"); try { const response = await send({ type: "RUN_SYNC" }); render(response.state); showView(response.state.fleet?.assignments?.length ? "trips" : "vehicles"); const errors = Object.entries(response.collection).filter(([, value]) => !value.ok).map(([key, value]) => `${key}: ${value.error}`); setStatus(response.synced ? "Loaded records. Review completeness and invoice-status blockers." : `Not refreshed; prior results retained. ${errors.join(" ")}`, response.synced ? "good" : "error"); } catch (error) { setStatus(error.message, "error"); } finally { el.syncButton.disabled = false; } });
+el.syncButton.addEventListener("click", async () => { el.syncButton.disabled = true; setStatus("Collecting signed-in portal records…", "busy"); try { const response = await send({ type: "RUN_SYNC" }); render(response.state); showView(response.state.fleet?.assignments?.length ? "trips" : "vehicles"); const errors = Object.entries(response.collection).filter(([, value]) => !value.ok).map(([key, value]) => `${key}: ${value.error}`); const partial = response.synced && response.state.collectionRuns?.ezpass?.complete === false; setStatus(partial ? "Partial sync saved. Search-incomplete trips are blocked; completed trips remain reviewable." : response.synced ? "Loaded records. Review completeness and invoice-status blockers." : `Not refreshed; prior results retained. ${errors.join(" ")}`, partial ? "error" : response.synced ? "good" : "error"); } catch (error) { setStatus(error.message, "error"); } finally { el.syncButton.disabled = false; } });
 el.prepareButton.addEventListener("click", () => setStatus("Make E-ZPass Transactions active, open the extension popup, and click Prepare evidence.", "busy"));
 el.batchList.addEventListener("change", async (event) => {
   if (event.target?.dataset?.action !== "approve-trip") return;

@@ -4,7 +4,7 @@
   const TRANSACTIONS_PATH = "/ezpass/dashboard/transactions";
   const MAX_TOTAL_PAGES = 500;
   const RUN_TIMEOUT_MS = 300000;
-  const PAGE_TIMEOUT_MS = 10000;
+  const PAGE_TIMEOUT_MS = 15000;
   const SETTLE_MS = 350;
   const EMPTY_SETTLE_MS = 1800;
   const IDENTIFIER_MENU_SETTLE_MS = 1500;
@@ -128,11 +128,14 @@
       if (parsed) records.push(parsed);
     });
     const pageNumber = activePageNumber();
-    const noTransactions = /\bno transactions found\b/i.test(document.body?.innerText || document.body?.textContent || "");
+    const main = transactionMain();
+    const noTransactions = /\bno transactions found\b/i.test(main?.innerText || main?.textContent || "");
+    const loading = controls(main, '[aria-busy="true"], [role="progressbar"], [data-loading="true"]')
+      .some(isVisible);
     const signature = JSON.stringify([pageNumber, ...raw.map((item) => [
       item.transactionId, item.timestamp, item.transactionDate, item.transactionTime, item.amount, item.tagOrPlate
     ])]);
-    return { raw, records, noTransactions, signature, pageNumber, hasPager: Boolean(paginationRoot()) };
+    return { raw, records, noTransactions, loading, signature, pageNumber, hasPager: Boolean(paginationRoot()) };
   }
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -150,14 +153,14 @@
 
   async function settledPage(readDom, parseRecord, previousSignature = null, expectedPageNumber = null) {
     let stableSince = 0, last = null;
-    return waitFor(() => {
+    try { return await waitFor(() => {
       const sample = samplePage(readDom, parseRecord);
       const pageAdvanced = expectedPageNumber == null || sample.pageNumber === expectedPageNumber;
       // The live portal briefly removes the table and renders "No transactions
       // found" after a pager click. Never accept that placeholder while an
       // expected page transition is pending.
-      const genuineEmpty = expectedPageNumber == null && sample.noTransactions && !sample.hasPager;
-      const meaningful = pageAdvanced && (sample.raw.length || genuineEmpty);
+      const genuineEmpty = expectedPageNumber == null && sample.noTransactions && !sample.hasPager && !sample.raw.length;
+      const meaningful = pageAdvanced && !sample.loading && (sample.raw.length || genuineEmpty);
       if (!meaningful || previousSignature && sample.signature === previousSignature) {
         stableSince = 0; last = sample.signature; return null;
       }
@@ -167,7 +170,55 @@
       // be mistaken for proof that all results fit on one page.
       const requiredSettle = sample.raw.length && sample.hasPager ? SETTLE_MS : EMPTY_SETTLE_MS;
       return Date.now() - stableSince >= requiredSettle ? sample : null;
-    }, PAGE_TIMEOUT_MS, "E-ZPass results did not finish loading after filtering or pagination.");
+    }, PAGE_TIMEOUT_MS, "E-ZPass pagination did not settle or advance."); }
+    catch (error) {
+      if (!/pagination did not settle or advance/.test(error.message)) throw error;
+      error.code = "EZPASS_PAGE_STALLED";
+      throw error;
+    }
+  }
+
+  function searchResultFits(sample, query) {
+    if (sample.noTransactions && !sample.raw.length) return true;
+    if (!sample.raw.length || !sample.records.length) return false;
+    // A credit-only table is not proof that the Toll search finished. Credits
+    // remain excluded, while a genuine empty result needs the stable no-rows UI.
+    return sample.records.every((record) => {
+      const stamp = localTimestampKey(rawTimestamp(record));
+      const date = stamp ? `${stamp.slice(0, 4)}-${stamp.slice(4, 6)}-${stamp.slice(6, 8)}` : null;
+      return recordMatchesQuery(record, query) && date >= query.startDate && date <= query.endDate;
+    });
+  }
+
+  async function waitForSearchResult({ baseline, baselineRevision, getNetworkRevision, query, readDom, parseRecord,
+    timeoutMs = PAGE_TIMEOUT_MS }) {
+    const deadline = Date.now() + timeoutMs;
+    let stableSince = 0, last = null, transition = false, sawLoading = false;
+    let lastReason = "search_not_applied";
+    while (Date.now() < deadline) {
+      assertRoute("trip filter results");
+      await continueActiveSessionIfNeeded();
+      const sample = samplePage(readDom, parseRecord);
+      sawLoading ||= sample.loading;
+      const responseObserved = typeof getNetworkRevision === "function" &&
+        getNetworkRevision() > baselineRevision;
+      transition ||= sample.signature !== baseline.signature || responseObserved || sawLoading;
+      if (!transition) { lastReason = "search_not_applied"; await sleep(100); continue; }
+      if (sample.loading) { lastReason = "loading"; stableSince = 0; await sleep(100); continue; }
+      if (!searchResultFits(sample, query)) {
+        lastReason = sample.raw.length ? "filters_not_confirmed" : "empty_not_confirmed";
+        stableSince = 0; await sleep(100); continue;
+      }
+      const identity = JSON.stringify([sample.signature, sample.noTransactions, sample.hasPager]);
+      if (last !== identity) { last = identity; stableSince = Date.now(); await sleep(100); continue; }
+      const settleMs = sample.records.length && sample.hasPager ? SETTLE_MS : EMPTY_SETTLE_MS;
+      if (Date.now() - stableSince >= settleMs) return sample;
+      await sleep(100);
+    }
+    const error = new Error(`E-ZPass search incomplete (${lastReason}).`);
+    error.code = "EZPASS_SEARCH_INCOMPLETE";
+    error.reason = lastReason;
+    throw error;
   }
 
   function localTimestampKey(value) {
@@ -707,7 +758,7 @@
     await sleep(200);
   }
 
-  async function applyQuery(query, readDom, parseRecord) {
+  async function applyQuery(query, readDom, parseRecord, getNetworkRevision) {
     assertRoute("trip filter setup");
     await ensureFilterOpen();
     const inputs = visibleDateInputs();
@@ -722,20 +773,24 @@
     filters = transactionFilterControls(visibleDateInputs());
     const search = filters.search;
     await waitFor(() => !isDisabled(search) && search, 5000, "E-ZPass Search remained disabled after applying trip filters.");
+    const baseline = samplePage(readDom, parseRecord);
+    const baselineRevision = typeof getNetworkRevision === "function" ? getNetworkRevision() : 0;
     await portalAction(search, "trip filter search");
     assertRoute("trip filter search");
-    let page = await settledPage(readDom, parseRecord, null);
-    const fits = (candidate) => candidate.noTransactions || candidate.records.every((record) => {
-      const stamp = localTimestampKey(rawTimestamp(record));
-      const date = stamp ? `${stamp.slice(0, 4)}-${stamp.slice(4, 6)}-${stamp.slice(6, 8)}` : null;
-      return recordMatchesQuery(record, query) &&
-        date >= query.startDate && date <= query.endDate;
-    });
-    if (!fits(page)) page = await settledPage(readDom, parseRecord, page.signature);
-    if (!fits(page)) {
-      throw new Error("E-ZPass results did not confirm the requested trip filters.");
-    }
-    return page;
+    return waitForSearchResult({ baseline, baselineRevision, getNetworkRevision, query, readDom, parseRecord });
+  }
+
+  async function resetFiltersForRetry() {
+    assertRoute("search retry reset");
+    await ensureFilterOpen();
+    await portalAction(clearFilterButton(), "search retry reset");
+    await waitFor(() => {
+      const dates = visibleDateInputs();
+      const filters = transactionFilterControls(dates);
+      return dates.every((input) => !normalizedDateInputText(input.value)) &&
+        (!compactText(filters.identifier.value) || /^all tags$/i.test(compactText(filters.identifier.value)));
+    }, 3000, "E-ZPass filters could not be reset safely after a stalled search.");
+    assertRoute("search retry reset");
   }
 
   async function restoreFilters(snapshot) {
@@ -805,13 +860,18 @@
     return !prior;
   }
 
-  async function collectFilteredPages(firstPage, query, readDom, parseRecord, onEvidencePage) {
+  async function collectFilteredPages(firstPage, query, readDom, parseRecord, onEvidencePage, deadline = Infinity) {
     let page = firstPage;
     if (!page.noTransactions) page = await rewindToFirstPage(page, readDom, parseRecord, Date.now() + RUN_TIMEOUT_MS);
     if (!page.noTransactions) page = await maximizePageSize(page, readDom, parseRecord);
     const records = [], signatures = new Set();
     let pageCount = 0, rawCount = 0;
     for (;;) {
+      if (Date.now() >= deadline) {
+        const error = new Error("E-ZPass search reached its run deadline.");
+        error.code = "EZPASS_SEARCH_INCOMPLETE"; error.reason = "run_deadline";
+        throw error;
+      }
       if (signatures.has(page.signature)) throw new Error("E-ZPass repeated a filtered result page.");
       signatures.add(page.signature); pageCount += 1; rawCount += page.raw.length;
       records.push(...page.records);
@@ -828,27 +888,54 @@
     return { records, pageCount, rawCount };
   }
 
-  async function collectQueries({ queryJobs, parseRecord, readDom, onEvidencePage }) {
+  async function collectQueries({ queryJobs, parseRecord, readDom, onEvidencePage, getNetworkRevision }) {
     const queries = validateQueries(queryJobs);
     await ensureFilterOpen();
     const original = snapshotFilters();
     const records = new Map(), reports = [];
     let pages = 0, rawCount = 0, primaryError = null;
+    const deadline = Date.now() + RUN_TIMEOUT_MS;
     try {
       for (const query of queries) {
-        let first;
-        try { first = await applyQuery(query, readDom, parseRecord); }
-        catch (error) {
-          if (error?.code === "EZPASS_IDENTIFIER_UNAVAILABLE") {
-            reports.push({ queryId: query.queryId, reservationId: query.reservationId, kind: query.kind,
-              pageCount: 0, rawCount: 0, recordCount: 0, complete: false, status: "identifier_unavailable" });
-            await portalAction(clearFilterButton(), "unavailable identifier reset");
-            await sleep(150);
-            continue;
-          }
-          throw new Error(`Trip ${query.reservationId} ${query.kind} search failed: ${error.message}`);
+        if (Date.now() >= deadline) {
+          reports.push({ queryId: query.queryId, reservationId: query.reservationId, kind: query.kind,
+            pageCount: 0, rawCount: 0, recordCount: 0, complete: false, status: "search_incomplete", reason: "run_deadline" });
+          continue;
         }
-        const result = await collectFilteredPages(first, query, readDom, parseRecord, onEvidencePage);
+        let result, failure = null;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          try {
+            if (Date.now() >= deadline) {
+              const error = new Error("E-ZPass search reached its run deadline.");
+              error.code = "EZPASS_SEARCH_INCOMPLETE"; error.reason = "run_deadline";
+              throw error;
+            }
+            const first = await applyQuery(query, readDom, parseRecord, getNetworkRevision);
+            result = await collectFilteredPages(first, query, readDom, parseRecord, onEvidencePage, deadline);
+            break;
+          } catch (error) {
+            failure = error;
+            if (error?.code === "EZPASS_IDENTIFIER_UNAVAILABLE") break;
+            if (!onEvidencePage && ["EZPASS_SEARCH_INCOMPLETE", "EZPASS_PAGE_STALLED"].includes(error?.code)) {
+              // A failed query contributes no records, including pages collected
+              // before a later pagination stall. Reset before retry/next query.
+              await resetFiltersForRetry();
+              if (attempt === 0 && Date.now() < deadline) continue;
+              break;
+            }
+            throw new Error(`Trip ${query.reservationId} ${query.kind} search failed: ${error.message}`);
+          }
+        }
+        if (!result) {
+          if (onEvidencePage) throw failure;
+          if (failure?.code === "EZPASS_IDENTIFIER_UNAVAILABLE") await resetFiltersForRetry();
+          else if (!["EZPASS_SEARCH_INCOMPLETE", "EZPASS_PAGE_STALLED"].includes(failure?.code)) throw failure;
+          reports.push({ queryId: query.queryId, reservationId: query.reservationId, kind: query.kind,
+            pageCount: 0, rawCount: 0, recordCount: 0, complete: false,
+            status: failure?.code === "EZPASS_IDENTIFIER_UNAVAILABLE" ? "identifier_unavailable" : "search_incomplete",
+            reason: failure?.reason || (failure?.code === "EZPASS_PAGE_STALLED" ? "page_not_advanced" : null) });
+          continue;
+        }
         pages += result.pageCount; rawCount += result.rawCount;
         let accepted = 0;
         for (const record of result.records) {
@@ -864,10 +951,12 @@
     catch (error) { throw new Error(`E-ZPass filter restoration failed: ${error.message}`); }
     if (primaryError) throw primaryError;
     const unavailable = reports.filter((report) => report.status === "identifier_unavailable").length;
-    return { records: [...records.values()], complete: true, completeForRange: unavailable === 0, pageCount: pages,
+    const incomplete = reports.filter((report) => report.status === "search_incomplete").length;
+    return { records: [...records.values()], complete: incomplete === 0, completeForRange: unavailable === 0 && incomplete === 0, pageCount: pages,
       rawCount, chunkCount: queries.length,
-      terminalReason: unavailable ? "available_trip_queries_complete" : "all_trip_queries_complete",
-      warning: unavailable ? `${unavailable} configured E-ZPass identifier${unavailable === 1 ? " is" : "s are"} unavailable and must be updated on the Vehicles page.` : null,
+      terminalReason: incomplete ? "partial_trip_queries" : unavailable ? "available_trip_queries_complete" : "all_trip_queries_complete",
+      warning: [incomplete ? `${incomplete} E-ZPass search${incomplete === 1 ? " is" : "es are"} incomplete; affected trips require review.` : null,
+        unavailable ? `${unavailable} configured E-ZPass identifier${unavailable === 1 ? " is" : "s are"} unavailable and must be updated on the Vehicles page.` : null].filter(Boolean).join(" ") || null,
       queryReports: reports };
   }
 
@@ -893,7 +982,7 @@
       accessibleControlName, namedCombos, transactionFilterControls,
       optionIdentifierCandidates, identifierOptions, uniqueIdentifierOption, waitForIdentifierOption,
       unavailableIdentifierError, typeIdentifierFilter, selectIdentifier,
-      recordMatchesQuery, mergeQueryRecord, collectFilteredPages,
+      recordMatchesQuery, mergeQueryRecord, collectFilteredPages, samplePage, searchResultFits, waitForSearchResult,
       snapshotFilters, applyQuery, restoreFilters }),
     constants: Object.freeze({ MAX_TOTAL_PAGES })
   });

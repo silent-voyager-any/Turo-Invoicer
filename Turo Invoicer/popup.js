@@ -33,7 +33,10 @@ elements.syncButton.addEventListener("click", async () => {
     render(response.state);
     const errors = Object.entries(response.collection).filter(([, result]) => !result.ok)
       .map(([source, result]) => `${source}: ${result.error}`);
-    status(response.synced ? "Sync complete. Open the dashboard to review." : `Not refreshed. ${errors.join(" ")}`, response.synced ? "good" : "error");
+    const partial = response.synced && response.state.collectionRuns?.ezpass?.complete === false;
+    status(partial ? "Partial sync saved. Review search-incomplete trips in the dashboard; they cannot enter a batch."
+      : response.synced ? "Sync complete. Open the dashboard to review." : `Not refreshed. ${errors.join(" ")}`,
+      partial ? "error" : response.synced ? "good" : "error");
   } catch (error) { status(error.message, "error"); }
   finally { elements.syncButton.disabled = false; }
 });

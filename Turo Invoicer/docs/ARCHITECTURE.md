@@ -67,6 +67,8 @@ Version 0.5.7 builds one E-ZPass search per eligible trip and active confirmed i
 
 ## Dashboard and fleet state
 
+Version 0.5.8 requires a post-Search transition before accepting filtered results. A query that stalls is retried once after a verified filter reset. The collector discards that query's records if it still fails, reports `search_incomplete` for its trip, and continues only when the route and controls can be reset safely. Schema 5 retains a separate `lastCompleteSnapshot` of normalized sources when a partial run is committed. Matching uses only the current run's verified records; an incomplete trip is nonselectable. Source refresh marks old evidence stale and invalidates approvals.
+
 The popup is a compact launcher and sync status surface. `dashboard.html` is the persistent extension page for reconciliation and fleet configuration. It renders only stored normalized records and sends all writes through the service worker; it does not communicate directly with portal pages.
 
 Fleet assignments associate a Turo internal vehicle ID with an E-ZPass tag or plate over an inclusive local-date interval. The worker retains raw identifiers, derives canonical comparison values, rejects canonically overlapping ranges, rebuilds vehicle cards from Turo labels/plates, and recalculates reconciliation in its serialized state queue. A discovered Turo plate is only a suggestion until the user confirms it. Review shortcuts store an unfinished `uiDrafts` value; they never create an assignment silently.

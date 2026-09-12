@@ -14,7 +14,7 @@ let managedUrl = null;
 const existingTollInvoices = new Set();
 const portalResponses = {
   1: { ok: true, source: "turo", complete: true, pagePath: "/us/en/trips/history", records: [{ id: "1001", vehicleId: "car1", start: "2026-07-01 09:00", end: "2026-07-01 18:00", vehicleLabel: "Example car", vehiclePlate: "NY:ABC-123", guestName: "Synthetic private field" }] },
-  2: { ok: true, source: "ezpass", complete: true, completeForRange: true, collectorRevision: "0.5.7-trip-query-9", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, tagOrPlate: "ABC123", queryId: "1001:plate:ABC123", queryReservationId: "1001", queryVehicleId: "car1", queryKind: "plate", queryIdentifier: "NY:ABC-123", accountNumber: "Synthetic private field" }] }
+  2: { ok: true, source: "ezpass", complete: true, completeForRange: true, collectorRevision: "0.5.8-trip-query-10", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, tagOrPlate: "ABC123", queryId: "1001:plate:ABC123", queryReservationId: "1001", queryVehicleId: "car1", queryKind: "plate", queryIdentifier: "NY:ABC-123", accountNumber: "Synthetic private field" }] }
 };
 globalThis.chrome = {
   runtime: { id: "test-id", getURL: (file) => "chrome-extension://test-id/" + file,
@@ -96,7 +96,7 @@ test("verified uncharged trips define the E-ZPass coverage boundary", async () =
   ] };
   try {
     const result = await call({ type: "RUN_SYNC" });
-    assert.equal(result.synced, true);
+    assert.equal(result.synced, true, JSON.stringify(result.collection));
     assert.deepEqual(sentMessages.find(({ id, message }) => id === 2 && message.type === "COLLECT_NOW").message.range,
       { startDate: "2026-07-15", endDate: "2026-07-16" });
     assert.equal(result.state.tripEligibility["1000"].reason, "standard_window_expired");
@@ -140,6 +140,32 @@ test("an unavailable configured tag is reported without discarding other collect
     assert.ok(result.state.invoiceDrafts.find((draft) => draft.reservationId === "1001")
       .blockingReasons.includes("identifier_unavailable"));
   } finally { portalResponses[2] = prior; }
+});
+test("partial trip searches retain the prior complete snapshot and reject unverified records", async () => {
+  const completeBefore = (await call({ type: "RUN_SYNC" })).state;
+  const priorTuro = portalResponses[1], priorEzpass = portalResponses[2];
+  portalResponses[1] = { ...priorTuro, records: [priorTuro.records[0], { ...priorTuro.records[0], id: "1002",
+    start: "2026-07-02 09:00", end: "2026-07-02 18:00" }] };
+  portalResponses[2] = { ...priorEzpass, complete: false, completeForRange: false,
+    queryReports: [
+      { queryId: "1001:plate:ABC123", reservationId: "1001", kind: "plate", status: "complete", complete: true, recordCount: 1 },
+      { queryId: "1002:plate:ABC123", reservationId: "1002", kind: "plate", status: "search_incomplete", complete: false, reason: "search_not_applied" }
+    ] };
+  try {
+    const result = await call({ type: "RUN_SYNC" });
+    assert.equal(result.synced, true, JSON.stringify(result.collection));
+    assert.equal(result.state.collectionRuns.ezpass.complete, false);
+    assert.equal(result.state.lastCompleteSnapshot.sources.ezpass.records.length, completeBefore.sources.ezpass.records.length);
+    assert.equal(result.state.invoiceDrafts.find((draft) => draft.reservationId === "1001").selectable, true);
+    assert.ok(result.state.invoiceDrafts.find((draft) => draft.reservationId === "1002").blockingReasons.includes("search_incomplete"));
+    portalResponses[2].records = [{ ...priorEzpass.records[0], id: "bad", queryId: "1002:plate:ABC123" }];
+    const rejected = await call({ type: "RUN_SYNC" });
+    assert.equal(rejected.synced, false);
+    assert.equal(rejected.state.sources.ezpass.records[0].id, "toll1");
+  } finally {
+    portalResponses[1] = priorTuro; portalResponses[2] = priorEzpass;
+    await call({ type: "RUN_SYNC" });
+  }
 });
 test("concurrent sync/settings updates are serialized without lost writes", async () => {
   const results = await Promise.all([

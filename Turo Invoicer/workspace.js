@@ -64,9 +64,17 @@ export function buildTripWorkspace({
     const selected = prior?.selected === true;
     const blockingReasons = [];
     if (!runComplete(collectionRuns, "turo")) blockingReasons.push("turo_collection_incomplete");
-    if (!runComplete(collectionRuns, "ezpass")) blockingReasons.push("ezpass_collection_incomplete");
     const tripQueryReports = Array.isArray(collectionRuns?.ezpass?.queryReports)
       ? collectionRuns.ezpass.queryReports.filter((report) => text(report.reservationId) === reservationId) : [];
+    // A partial run blocks only reservations whose required searches did not
+    // complete; unrelated verified reservations remain available for review.
+    if (collectionRuns?.ezpass?.complete !== true && !tripQueryReports.length) {
+      blockingReasons.push("ezpass_collection_incomplete");
+    }
+    if (tripQueryReports.some((report) => report.status === "search_incomplete" ||
+        (report.status !== "identifier_unavailable" && report.complete !== true))) {
+      blockingReasons.push("search_incomplete");
+    }
     if (tripQueryReports.some((report) => report.status === "identifier_unavailable")) {
       blockingReasons.push("identifier_unavailable");
     }
@@ -77,7 +85,7 @@ export function buildTripWorkspace({
     const totalCents = tolls.filter((toll) => selectedTollIds.includes(toll.id))
       .reduce((sum, toll) => sum + (Number.isInteger(toll.amountCents) ? toll.amountCents : 0), 0);
     const tripEvidence = (Array.isArray(evidence) ? evidence : []).filter((item) =>
-      text(item.reservationId) === reservationId && item.status !== "deleted");
+      text(item.reservationId) === reservationId && item.status !== "deleted" && item.status !== "stale");
     const covered = new Set(tripEvidence.flatMap((item) => Array.isArray(item.coveredTollIds) ? item.coveredTollIds.map(text) : []));
     const evidenceComplete = selectedTollIds.length > 0 && selectedTollIds.every((id) => covered.has(id));
     const revisionInput = JSON.stringify({ reservationId, vehicleId: trip.vehicleId, startMs: trip.startMs, endMs: trip.endMs,
