@@ -161,7 +161,10 @@
         stableSince = 0; last = sample.signature; return null;
       }
       if (last !== sample.signature) { last = sample.signature; stableSince = Date.now(); return null; }
-      const requiredSettle = sample.raw.length ? SETTLE_MS : EMPTY_SETTLE_MS;
+      // A real one-page filtered result omits the pager entirely. Give the
+      // portal its longer empty/no-pager settle window so a late pager cannot
+      // be mistaken for proof that all results fit on one page.
+      const requiredSettle = sample.raw.length && sample.hasPager ? SETTLE_MS : EMPTY_SETTLE_MS;
       return Date.now() - stableSince >= requiredSettle ? sample : null;
     }, PAGE_TIMEOUT_MS, "E-ZPass results did not finish loading after filtering or pagination.");
   }
@@ -217,6 +220,7 @@
     // A single-page result cannot benefit from changing the page size. Skipping
     // the control also avoids waiting for a signature change the portal will
     // never produce when every row already fits on page 1.
+    if (!paginationRoot()) return page;
     const currentNext = nextControl();
     if (currentNext && isDisabled(currentNext)) return page;
     const combos = controls(transactionMain(), '[role="combobox"][aria-label="View"]')
@@ -262,6 +266,9 @@
     const signatures = new Set([page.signature]);
     for (let count = 0; count < MAX_TOTAL_PAGES; count += 1) {
       if (Date.now() >= deadline) throw new Error("E-ZPass collection exceeded its five-minute safety deadline.");
+      // E-ZPass does not render pagination for a result set that fits on one
+      // page. This is distinct from a malformed pager missing Previous.
+      if (!paginationRoot()) return page;
       const previous = previousControl();
       if (!previous) throw new Error("E-ZPass Previous pagination control is missing.");
       if (isDisabled(previous)) {
@@ -324,6 +331,7 @@
         terminalReason = "older_than_required_range";
         break;
       }
+      if (!paginationRoot()) { terminalReason = "single_page_no_pager"; break; }
       const next = nextControl();
       if (!next) throw new Error("E-ZPass Next pagination control is missing from a nonempty result page.");
       if (isDisabled(next)) { terminalReason = "next_disabled"; break; }
@@ -778,6 +786,7 @@
       records.push(...page.records);
       if (onEvidencePage && page.records.length) await onEvidencePage(query, page.records, pageCount);
       if (page.noTransactions && !page.records.length) break;
+      if (!paginationRoot()) break;
       const next = nextControl();
       if (!next) throw new Error("E-ZPass Next control is missing from filtered results.");
       if (isDisabled(next)) break;
@@ -839,7 +848,7 @@
       sessionExpiryDialogs, continueActiveSessionIfNeeded,
       accessibleControlName, namedCombos, transactionFilterControls,
       optionIdentifierCandidates, uniqueIdentifierOption, typeIdentifierFilter, selectIdentifier,
-      recordMatchesQuery, mergeQueryRecord,
+      recordMatchesQuery, mergeQueryRecord, collectFilteredPages,
       snapshotFilters, applyQuery, restoreFilters }),
     constants: Object.freeze({ MAX_TOTAL_PAGES })
   });

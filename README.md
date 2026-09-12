@@ -4,7 +4,7 @@ A local-first Chrome extension that helps Turo hosts reconcile NY E-ZPass toll a
 
 The extension observes data loaded in your signed-in browser tabs, matches toll timestamps to trip intervals, and presents suggestions for review. It does not require a server, store portal passwords, or submit reimbursement claims.
 
-> **Status: evidence-ready personal release, version 0.5.5.** The extension verifies Turo trips, searches E-ZPass per trip and exact confirmed identifier, groups matches, captures visible evidence locally, and requires individual plus immutable batch approval. Reimbursement submission remains disabled pending verified upload fixtures.
+> **Status: evidence-ready personal release, version 0.5.6.** The extension verifies Turo trips, searches E-ZPass per trip and exact confirmed identifier, groups matches, captures visible evidence locally, and requires individual plus immutable batch approval. Reimbursement submission remains disabled pending verified upload fixtures.
 
 ## Features
 
@@ -19,7 +19,11 @@ The extension observes data loaded in your signed-in browser tabs, matches toll 
 - Local snapshots, atomic two-source sync, and a clear-data control.
 - No backend uploads, analytics, remote scripts, or automatic claim submission.
 
-## Version 0.5.5 update
+## Version 0.5.6 update
+
+E-ZPass filtered searches now accept a stably rendered, nonempty result with no pagination navigation as a complete single-page result. A visible pager that is missing required Previous or Next controls still fails safely rather than guessing collection completeness.
+
+Version 0.5.5 added masked date entry:
 
 E-ZPass trip searches now type each Start and End date directly into the portal's masked `MM/DD/YY` fields. The collector verifies the exact accepted date and never opens or depends on the calendar widget.
 
@@ -69,7 +73,7 @@ npm test
 npm run check
 ```
 
-The current suite contains 109 tests. Checks cover manifest references, the intended permissions, and JavaScript syntax. Tests use synthetic data and mocked Chrome/DOM interfaces; authenticated smoke-check account data is never committed.
+The current suite contains 132 tests. Checks cover manifest references, the intended permissions, and JavaScript syntax. Tests use synthetic data and mocked Chrome/DOM interfaces; authenticated smoke-check account data is never committed.
 
 ## Documentation
 

@@ -21,7 +21,7 @@ Keep exactly one matching tab per source open:
 - Turo: `https://turo.com/us/en/trips/history`.
 - E-ZPass NY: `https://www.e-zpassny.com/ezpass/dashboard/transactions`.
 
-Do not leave duplicate matching history/transactions tabs open. Version 0.5.5 searches E-ZPass separately for every eligible trip and confirmed active tag/plate, types the trip dates into the masked `MM/DD/YY` fields, and restores the filters that were present before sync. It does not use the calendar widget. If the verified session-expiry warning appears during a user-started sync, the extension chooses **continue working**; it does not keep sessions alive otherwise, solve challenges, or sign in for you.
+Do not leave duplicate matching history/transactions tabs open. Version 0.5.6 searches E-ZPass separately for every eligible trip and confirmed active tag/plate, types the trip dates into the masked `MM/DD/YY` fields, and restores the filters that were present before sync. A stable nonempty search may legitimately have no pager when all results fit on one page. It does not use the calendar widget. If the verified session-expiry warning appears during a user-started sync, the extension chooses **continue working**; it does not keep sessions alive otherwise, solve challenges, or sign in for you.
 
 Use toll passage/transaction time, not posting date. Check which vehicles and reservations are actually represented. Clear data and reload before changing accounts or beginning a different date-range capture workflow: tab-memory network records can accumulate during navigation.
 

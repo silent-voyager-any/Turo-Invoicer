@@ -353,7 +353,7 @@ test("proves descending page chronology and rejects boundary reversals", () => {
 });
 
 function portalFixture({ pages, startPage = 0, activeFilter = false, descendingSort = true,
-  repeatNext = false, omitPrevious = false, omitNext = false, transientEmptyMs = 0 }) {
+  repeatNext = false, omitPrevious = false, omitNext = false, omitPager = false, transientEmptyMs = 0 }) {
   let pageIndex = startPage;
   let loading = false;
   const clicks = { previous: 0, next: 0, transactionDate: 0, filter: 0, search: 0 };
@@ -395,7 +395,7 @@ function portalFixture({ pages, startPage = 0, activeFilter = false, descendingS
   };
   const main = {
     querySelectorAll(selector) {
-      if (selector.includes('nav[aria-label="pagination navigation"]')) return [pager];
+      if (selector.includes('nav[aria-label="pagination navigation"]')) return omitPager ? [] : [pager];
       if (selector === "button, [role='button'], input[type='submit'], input[type='button']") {
         return [...(omitPrevious ? [] : [previous]), active, ...(omitNext ? [] : [next]), ...unrelated];
       }
@@ -466,6 +466,21 @@ test("active portal filters fail without retaining their values", async () => {
   assert.equal(api.testing.hasActivePortalFilters(), true);
   await assert.rejects(api.collect({ range: { startDate: "2026-08-01", endDate: "2026-08-31" },
     parseRecord: fixture.parseRecord, readDom: fixture.readDom }), /active date, tag, or plate filter/);
+});
+
+test("accepts a stable nonempty one-page result when E-ZPass omits pagination", async () => {
+  const fixture = portalFixture({ omitPager: true,
+    pages: [[{ id: "one", timestamp: "08/20/2026 1:00 PM", amount: "-$1" }]] });
+  const result = await api.collect({ range: { startDate: "2026-08-01", endDate: "2026-08-31" },
+    parseRecord: fixture.parseRecord, readDom: fixture.readDom });
+  assert.equal(result.terminalReason, "single_page_no_pager");
+  assert.deepEqual(clone(result.records).map(({ id }) => id), ["one"]);
+
+  const firstPage = { noTransactions: false, signature: "filtered-one", pageNumber: null,
+    raw: [{ id: "one" }], records: [{ id: "one" }] };
+  const filtered = await api.testing.collectFilteredPages(firstPage, {}, () => {}, (value) => value);
+  assert.equal(filtered.pageCount, 1);
+  assert.deepEqual(clone(filtered.records), [{ id: "one" }]);
 });
 
 test("missing and repeated pagination controls fail safely", async () => {

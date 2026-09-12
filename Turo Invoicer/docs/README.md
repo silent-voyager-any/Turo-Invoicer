@@ -1,6 +1,6 @@
 # Project documentation
 
-This reference describes version 0.5.5: trip-first exact E-ZPass searches, masked date-input entry, sync-scoped session continuation, schema-5 evidence and approval state, authenticated Turo status checks, local IndexedDB screenshots, and the four-page dashboard. Last reviewed: September 8, 2026.
+This reference describes version 0.5.6: trip-first exact E-ZPass searches, masked date-input entry, single-page filtered-result detection, sync-scoped session continuation, schema-5 evidence and approval state, authenticated Turo status checks, local IndexedDB screenshots, and the four-page dashboard. Last reviewed: September 12, 2026.
 
 ## Reading paths
 
