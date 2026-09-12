@@ -10,7 +10,7 @@ This directory is the runnable Chrome Manifest V3 extension. Select this folder,
 4. Open the fleet dashboard from the popup, then select **Find uncharged trips**. Collection can take several minutes for large accounts. Only completed Turo trips qualify.
 5. Review suggestions and use the dashboard's dated vehicle-ID/tag/plate form before relying on a result.
 
-Version 0.5.6 collects and verifies Turo first, then searches E-ZPass separately for each eligible trip and every confirmed active tag and plate. It types each trip date into the portal's masked `MM/DD/YY` inputs and accepts a stable nonempty filtered result without a pager as a complete single page. A malformed visible pager still fails safely. It retains sync-scoped session continuation, local evidence, and revision-bound approvals. Turo submission remains disabled pending verified upload fixtures. Reload the extension and both portal tabs after updating.
+Version 0.5.7 collects and verifies Turo first, then searches E-ZPass separately for each eligible trip and every confirmed active tag and plate. It types each trip date into the portal's masked `MM/DD/YY` inputs, waits for the exact tag/plate menu, and reports unavailable vehicle assignments per trip while continuing other searches. An affected trip cannot be batched until its assignment is corrected. It retains sync-scoped session continuation, local evidence, and revision-bound approvals. Turo submission remains disabled pending verified upload fixtures. Reload the extension and both portal tabs after updating.
 
 No package installation or build is needed. Development checks, from this directory:
 

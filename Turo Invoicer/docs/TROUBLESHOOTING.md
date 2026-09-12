@@ -53,6 +53,8 @@ Network records take precedence over DOM records. Stale partial network capture 
 
 ## E-ZPass filters and manual tags
 
+Version 0.5.7 waits for the portal's tag/plate menu to populate before treating an exact option as unavailable. A configured tag or plate that is absent from E-ZPass is flagged on the affected trip, not silently substituted or treated as zero tolls. Other valid searches continue; the affected trip is nonselectable until its assignment is updated on Vehicles and a new sync succeeds. A menu that never loads, a route change, or a restoration failure still leaves the previous snapshot intact.
+
 Version 0.5.6 treats a stably rendered, nonempty filtered result with no pagination navigation as a valid one-page query. E-ZPass omits its pager when every result fits on that page. If a pager is visible but Previous or Next is missing, collection still fails safely because completeness cannot be proven.
 
 Version 0.5.5 does not operate the E-ZPass calendar. It enters six digits directly into each masked `MM/DD/YY` field, lets the portal insert separators, and verifies that the accepted value exactly matches the requested trip date. A disabled, read-only, incomplete, different, or invalid value fails safely with diagnostics that never include the date itself.

@@ -65,6 +65,11 @@ export function buildTripWorkspace({
     const blockingReasons = [];
     if (!runComplete(collectionRuns, "turo")) blockingReasons.push("turo_collection_incomplete");
     if (!runComplete(collectionRuns, "ezpass")) blockingReasons.push("ezpass_collection_incomplete");
+    const tripQueryReports = Array.isArray(collectionRuns?.ezpass?.queryReports)
+      ? collectionRuns.ezpass.queryReports.filter((report) => text(report.reservationId) === reservationId) : [];
+    if (tripQueryReports.some((report) => report.status === "identifier_unavailable")) {
+      blockingReasons.push("identifier_unavailable");
+    }
     if (eligibility !== "eligible_uncharged") blockingReasons.push(eligibility);
     if (!tolls.length) blockingReasons.push("no_matching_tolls");
     if (!selectedTollIds.length && tolls.length) blockingReasons.push("no_tolls_selected");

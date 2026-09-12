@@ -42,6 +42,7 @@ const reasonLabel = (reason) => ({
   invalid_or_nonpositive_amount: "Invalid toll amount",
   conflicting_vehicle_mapping: "Vehicle assignments conflict",
   identifier_not_mapped: "Identifier is not mapped to a vehicle",
+  identifier_unavailable: "Configured tag or plate is not available in E-ZPass; update it on Vehicles",
   mapped_vehicle_no_trip: "Personal/unassigned — no completed trip for this vehicle",
   overlapping_trips: "Overlapping trips require review",
   no_trip_in_time_range: "No trip in range"
@@ -118,7 +119,10 @@ function coverageLabel(runs = {}) {
   const ezpass = runs.ezpass;
   if (!ezpass) return { text: "Trip searches unavailable", warning: true };
   if (ezpass.complete !== true || ezpass.completeForRange !== true) {
-    return { text: "One or more trip identifier searches are incomplete", warning: true };
+    const unavailable = (ezpass.queryReports || []).filter((report) => report.status === "identifier_unavailable").length;
+    return { text: unavailable
+      ? `${unavailable} configured tag/plate ${unavailable === 1 ? "assignment is" : "assignments are"} unavailable in E-ZPass; affected trips need review`
+      : "One or more trip identifier searches are incomplete", warning: true };
   }
   return Number(ezpass.recordCount) > 0
     ? { text: "All configured trip identifiers searched", warning: false }
@@ -148,9 +152,19 @@ function tripCard(draft, state) {
   if (!draft.tolls?.length) tolls.append(element("p", "muted", "No uniquely matched tolls found."));
   const reports = state.collectionRuns?.ezpass?.queryReports || [];
   const tripReports = reports.filter((report) => String(report.reservationId) === String(draft.reservationId));
-  const queryText = tripReports.length ? `${tripReports.length} identifiers searched · ${tripReports.reduce((sum, item) => sum + (item.recordCount || 0), 0)} filtered toll rows` : "No confirmed identifier search completed";
+  const unavailableQueries = tripReports.filter((report) => report.status === "identifier_unavailable").length;
+  const completedQueries = tripReports.filter((report) => report.complete === true).length;
+  const queryText = tripReports.length
+    ? `${completedQueries}/${tripReports.length} identifiers searched · ${unavailableQueries} unavailable · ${tripReports.reduce((sum, item) => sum + (item.recordCount || 0), 0)} filtered toll rows`
+    : "No confirmed identifier search completed";
   card.append(heading, element("p", "internal-id", `Turo internal vehicle ID: ${draft.vehicleId} — not an E-ZPass tag`), dates,
     element("p", "muted", queryText), tolls, element("p", "", `${draft.selectedTollIds.length} selected · ${moneyCents(draft.totalCents)} · ${draft.evidenceIds?.length || 0} evidence images`));
+  for (const report of tripReports.filter((item) => item.status === "identifier_unavailable")) {
+    const assignment = (state.fleet?.assignments || []).find((item) =>
+      String(item.vehicleId) === String(draft.vehicleId) && item.kind === report.kind &&
+      `${draft.reservationId}:${item.kind}:${item.canonicalIdentifier}` === report.queryId);
+    card.append(element("p", "muted", `E-ZPass does not list configured ${report.kind} ${assignment?.identifier || "(assignment unavailable)"}. Update it on Vehicles.`));
+  }
   if (draft.blockingReasons?.length) {
     const reasons = draft.blockingReasons.map((reason) =>
       reason === draft.eligibility && draft.eligibilityReason ? reasonLabel(draft.eligibilityReason) : reasonLabel(reason));
@@ -227,7 +241,14 @@ function render(state, { restore = false } = {}) {
     const vehicle = (state.fleet?.vehicles || []).find((item) => String(item.vehicleId) === String(draft.vehicleId));
     const reasons = draft.blockingReasons.map((reason) =>
       reason === draft.eligibility && draft.eligibilityReason ? reasonLabel(draft.eligibilityReason) : reasonLabel(reason));
-    return reviewCard(`Trip ${draft.reservationId} · ${vehicle?.label || "Turo vehicle"}`, reasons.join(" · "));
+    const unavailable = (state.collectionRuns?.ezpass?.queryReports || []).filter((report) =>
+      String(report.reservationId) === String(draft.reservationId) && report.status === "identifier_unavailable");
+    const identifiers = unavailable.map((report) => (state.fleet?.assignments || []).find((assignment) =>
+      String(assignment.vehicleId) === String(draft.vehicleId) &&
+      `${draft.reservationId}:${assignment.kind}:${assignment.canonicalIdentifier}` === report.queryId))
+      .filter(Boolean).map((assignment) => `${assignment.kind} ${assignment.identifier}`);
+    return reviewCard(`Trip ${draft.reservationId} · ${vehicle?.label || "Turo vehicle"}`,
+      [reasons.join(" · "), identifiers.length ? `Unavailable in E-ZPass: ${identifiers.join(", ")}` : ""].filter(Boolean).join(" · "));
   });
   fill(el.tripBlockerList, tripBlockers, "No trip or source blockers.");
   const tollReview = new Map();

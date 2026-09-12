@@ -7,6 +7,7 @@
   const PAGE_TIMEOUT_MS = 10000;
   const SETTLE_MS = 350;
   const EMPTY_SETTLE_MS = 1800;
+  const IDENTIFIER_MENU_SETTLE_MS = 1500;
 
   const isoParts = (value) => {
     if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -594,12 +595,37 @@
     return candidates;
   }
 
-  function uniqueIdentifierOption(query) {
+  function identifierOptions(combo = null) {
+    const listboxId = combo?.getAttribute?.("aria-controls");
+    const listbox = listboxId ? document.getElementById?.(listboxId) : null;
+    const root = listbox && isVisible(listbox) ? listbox : document;
+    return controls(root, '[role="option"]').filter(isVisible);
+  }
+
+  function uniqueIdentifierOption(query, combo = null) {
     const expected = String(query.canonicalIdentifier || "");
-    const matches = controls(document, '[role="option"]').filter((node) =>
-      isVisible(node) && optionIdentifierCandidates(node, query.kind).has(expected));
+    const matches = identifierOptions(combo).filter((node) =>
+      optionIdentifierCandidates(node, query.kind).has(expected));
     if (matches.length > 1) throw new Error("E-ZPass exact tag/plate option is ambiguous.");
     return matches[0] || null;
+  }
+
+  async function waitForIdentifierOption(combo, query, timeoutMs) {
+    const end = Date.now() + timeoutMs;
+    while (Date.now() < end) {
+      await continueActiveSessionIfNeeded();
+      const option = uniqueIdentifierOption(query, combo);
+      if (option) return option;
+      await sleep(100);
+    }
+    return null;
+  }
+
+  function unavailableIdentifierError(combo, query) {
+    const count = identifierOptions(combo).length;
+    const error = new Error(`E-ZPass does not list this configured ${query.kind}. ${count} tag/plate options were visible. Update or remove the assignment on the Vehicles page.`);
+    error.code = "EZPASS_IDENTIFIER_UNAVAILABLE";
+    return error;
   }
 
   function identifierInput(combo) {
@@ -636,12 +662,17 @@
     await continueActiveSessionIfNeeded();
     combo.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     await portalAction(combo, "exact tag/plate menu");
-    await sleep(80);
-    let option = uniqueIdentifierOption(query);
+    // The live portal mounts its listbox asynchronously. Do not type into the
+    // combobox merely because the requested option was absent after one frame.
+    let option = await waitForIdentifierOption(combo, query, IDENTIFIER_MENU_SETTLE_MS);
+    const populatedMenu = identifierOptions(combo).length > 0;
     if (!option) {
       const typed = await typeIdentifierFilter(combo, query);
-      option = await waitFor(() => uniqueIdentifierOption(query), typed ? 5000 : 2500,
-        "E-ZPass exact tag/plate option is unavailable.");
+      option = await waitForIdentifierOption(combo, query, typed ? 5000 : 2500);
+    }
+    if (!option) {
+      if (!populatedMenu) throw new Error("E-ZPass tag/plate options did not finish loading; the identifier could not be verified.");
+      throw unavailableIdentifierError(combo, query);
     }
     await portalAction(option, "exact tag/plate selection");
     await waitFor(() => {
@@ -807,7 +838,16 @@
       for (const query of queries) {
         let first;
         try { first = await applyQuery(query, readDom, parseRecord); }
-        catch (error) { throw new Error(`Trip ${query.reservationId} ${query.kind} search failed: ${error.message}`); }
+        catch (error) {
+          if (error?.code === "EZPASS_IDENTIFIER_UNAVAILABLE") {
+            reports.push({ queryId: query.queryId, reservationId: query.reservationId, kind: query.kind,
+              pageCount: 0, rawCount: 0, recordCount: 0, complete: false, status: "identifier_unavailable" });
+            await portalAction(clearFilterButton(), "unavailable identifier reset");
+            await sleep(150);
+            continue;
+          }
+          throw new Error(`Trip ${query.reservationId} ${query.kind} search failed: ${error.message}`);
+        }
         const result = await collectFilteredPages(first, query, readDom, parseRecord, onEvidencePage);
         pages += result.pageCount; rawCount += result.rawCount;
         let accepted = 0;
@@ -817,14 +857,18 @@
           accepted += 1;
         }
         reports.push({ queryId: query.queryId, reservationId: query.reservationId, kind: query.kind,
-          pageCount: result.pageCount, rawCount: result.rawCount, recordCount: accepted, complete: true });
+          pageCount: result.pageCount, rawCount: result.rawCount, recordCount: accepted, complete: true, status: "complete" });
       }
     } catch (error) { primaryError = error; }
     try { await restoreFilters(original); }
     catch (error) { throw new Error(`E-ZPass filter restoration failed: ${error.message}`); }
     if (primaryError) throw primaryError;
-    return { records: [...records.values()], complete: true, completeForRange: true, pageCount: pages,
-      rawCount, chunkCount: queries.length, terminalReason: "all_trip_queries_complete", queryReports: reports };
+    const unavailable = reports.filter((report) => report.status === "identifier_unavailable").length;
+    return { records: [...records.values()], complete: true, completeForRange: unavailable === 0, pageCount: pages,
+      rawCount, chunkCount: queries.length,
+      terminalReason: unavailable ? "available_trip_queries_complete" : "all_trip_queries_complete",
+      warning: unavailable ? `${unavailable} configured E-ZPass identifier${unavailable === 1 ? " is" : "s are"} unavailable and must be updated on the Vehicles page.` : null,
+      queryReports: reports };
   }
 
   async function collect(options) {
@@ -847,7 +891,8 @@
       portalDate, normalizedDateDigits, maskedDatePrefix, dateInputDiagnostics, commitDateInput,
       sessionExpiryDialogs, continueActiveSessionIfNeeded,
       accessibleControlName, namedCombos, transactionFilterControls,
-      optionIdentifierCandidates, uniqueIdentifierOption, typeIdentifierFilter, selectIdentifier,
+      optionIdentifierCandidates, identifierOptions, uniqueIdentifierOption, waitForIdentifierOption,
+      unavailableIdentifierError, typeIdentifierFilter, selectIdentifier,
       recordMatchesQuery, mergeQueryRecord, collectFilteredPages,
       snapshotFilters, applyQuery, restoreFilters }),
     constants: Object.freeze({ MAX_TOTAL_PAGES })

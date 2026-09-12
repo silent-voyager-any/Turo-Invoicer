@@ -14,7 +14,7 @@ let managedUrl = null;
 const existingTollInvoices = new Set();
 const portalResponses = {
   1: { ok: true, source: "turo", complete: true, pagePath: "/us/en/trips/history", records: [{ id: "1001", vehicleId: "car1", start: "2026-07-01 09:00", end: "2026-07-01 18:00", vehicleLabel: "Example car", vehiclePlate: "NY:ABC-123", guestName: "Synthetic private field" }] },
-  2: { ok: true, source: "ezpass", complete: true, completeForRange: true, collectorRevision: "0.5.6-trip-query-8", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, tagOrPlate: "ABC123", queryId: "1001:plate:ABC123", queryReservationId: "1001", queryVehicleId: "car1", queryKind: "plate", queryIdentifier: "NY:ABC-123", accountNumber: "Synthetic private field" }] }
+  2: { ok: true, source: "ezpass", complete: true, completeForRange: true, collectorRevision: "0.5.7-trip-query-9", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, tagOrPlate: "ABC123", queryId: "1001:plate:ABC123", queryReservationId: "1001", queryVehicleId: "car1", queryKind: "plate", queryIdentifier: "NY:ABC-123", accountNumber: "Synthetic private field" }] }
 };
 globalThis.chrome = {
   runtime: { id: "test-id", getURL: (file) => "chrome-extension://test-id/" + file,
@@ -123,6 +123,23 @@ test("failed or multiple-tab collection preserves the prior snapshot", async () 
   assert.equal((await call({ type: "RUN_SYNC" })).synced, false);
   doubleTuro = false;
   assert.equal(JSON.stringify(stored), before);
+});
+test("an unavailable configured tag is reported without discarding other collected trip results", async () => {
+  const prior = portalResponses[2];
+  portalResponses[2] = { ...prior, completeForRange: false, warning: "One configured E-ZPass identifier is unavailable.",
+    queryReports: [
+      { queryId: "1001:tag:999", reservationId: "1001", kind: "tag", status: "identifier_unavailable", complete: false },
+      { queryId: "1001:plate:ABC123", reservationId: "1001", kind: "plate", status: "complete", complete: true, recordCount: 1 }
+    ] };
+  try {
+    const result = await call({ type: "RUN_SYNC" });
+    assert.equal(result.synced, true);
+    assert.equal(result.state.sources.ezpass.records.length, 1);
+    assert.equal(result.state.collectionRuns.ezpass.completeForRange, false);
+    assert.equal(result.state.collectionRuns.ezpass.queryReports[0].status, "identifier_unavailable");
+    assert.ok(result.state.invoiceDrafts.find((draft) => draft.reservationId === "1001")
+      .blockingReasons.includes("identifier_unavailable"));
+  } finally { portalResponses[2] = prior; }
 });
 test("concurrent sync/settings updates are serialized without lost writes", async () => {
   const results = await Promise.all([

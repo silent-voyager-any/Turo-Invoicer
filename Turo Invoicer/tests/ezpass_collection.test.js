@@ -145,7 +145,7 @@ test("distinguishes duplicate and missing labelled filter controls", () => {
 });
 
 function identifierFixture({ kind = "tag", canonicalIdentifier = "000123", optionText = "E-ZPass Tag: 000123",
-  delayed = false, ambiguous = false } = {}) {
+  delayed = false, menuDelay = 0, ambiguous = false } = {}) {
   let options = [];
   const combo = new TestInputElement();
   Object.assign(combo, visibleElement({ events: [], readOnly: false, disabled: false,
@@ -157,7 +157,11 @@ function identifierFixture({ kind = "tag", canonicalIdentifier = "000123", optio
       }
       return true;
     },
-    click() { if (!delayed) options = makeOptions(); }
+    click() {
+      if (delayed) return;
+      if (menuDelay) setTimeout(() => { options = makeOptions(); }, menuDelay);
+      else options = makeOptions();
+    }
   }));
   combo.value = "All tags";
   const makeOption = (text) => visibleElement({ textContent: text, click() { combo.value = text; } });
@@ -189,6 +193,23 @@ test("types an exact identifier to reveal a delayed or virtualized option", asyn
   assert.equal(fixture.combo.value, "E-ZPass Tag: 000123");
   assert.ok(fixture.combo.events.some((event) => event.type === "beforeinput"));
   assert.ok(fixture.combo.events.some((event) => event.type === "input"));
+});
+
+test("waits for a slowly hydrated exact identifier menu before typing", async () => {
+  const fixture = identifierFixture({ menuDelay: 250 });
+  await api.testing.selectIdentifier(fixture.combo, fixture.query);
+  assert.equal(fixture.combo.value, "E-ZPass Tag: 000123");
+  assert.equal(fixture.combo.events.some((event) => event.type === "input"), false);
+});
+
+test("classifies a genuinely absent configured identifier without exposing its value", async () => {
+  const fixture = identifierFixture({ canonicalIdentifier: "999999", optionText: "000123" });
+  await assert.rejects(api.testing.selectIdentifier(fixture.combo, fixture.query), (error) => {
+    assert.equal(error.code, "EZPASS_IDENTIFIER_UNAVAILABLE");
+    assert.match(error.message, /Update or remove the assignment/);
+    assert.doesNotMatch(error.message, /999999/);
+    return true;
+  });
 });
 
 test("rejects ambiguous exact identifier options", async () => {

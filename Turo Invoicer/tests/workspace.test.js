@@ -36,6 +36,14 @@ test("unknown eligibility and incomplete collections fail closed", () => {
   assert.equal(result.drafts[0].selectable, false);
 });
 
+test("an unavailable portal identifier blocks only its affected trip", () => {
+  const result = workspace({ collectionRuns: { ...complete, ezpass: { complete: true, queryReports: [
+    { reservationId: "trip-1", kind: "tag", status: "identifier_unavailable", complete: false }
+  ] } } });
+  assert.ok(result.drafts[0].blockingReasons.includes("identifier_unavailable"));
+  assert.equal(result.drafts[0].selectable, false);
+});
+
 test("sent toll fingerprints are not attached again", () => {
   const result = workspace({ submissionLedger: [{ status: "sent", tollIds: ["toll-1"] }] });
   assert.equal(result.drafts[0].tolls.length, 0);

@@ -8,7 +8,7 @@ const PATTERNS = { turo: ["https://turo.com/*"], ezpass: ["https://www.e-zpassny
 const MAX_RECORDS = 5000;
 const HISTORY_PATH = "/us/en/trips/history";
 const TRANSACTIONS_PATH = "/ezpass/dashboard/transactions";
-const EZPASS_COLLECTOR_REVISION = "0.5.6-trip-query-8";
+const EZPASS_COLLECTOR_REVISION = "0.5.7-trip-query-9";
 const TURO_INVOICE_ADAPTER_REVISION = "0.4.7-invoice-dom-1";
 const STANDARD_TOLL_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const TRUSTED_PAGES = new Set(["popup.html", "dashboard.html"]);
@@ -297,7 +297,9 @@ async function collect(source, request = {}) {
       throw new Error("Portal left the supported data page during sync. Return and retry.");
     }
     let records = sanitizeRecords(source, response.records);
-    const verifiedEmpty = source === "ezpass" && response.complete === true && response.completeForRange === true;
+    const verifiedEmpty = source === "ezpass" && response.complete === true &&
+      (response.completeForRange === true || (Array.isArray(response.queryReports) &&
+        response.queryReports.length > 0 && response.queryReports.every((report) => report.status === "identifier_unavailable")));
     if (!records.length && !verifiedEmpty) throw new Error("No supported records captured. Open the data page and reload it.");
     let warning = response.warning || null;
     if (source === "turo") {
@@ -383,7 +385,7 @@ async function commitSync(state, turo, ezpass, range) {
       recordCount: result.records.length,
       rawCount: result.rawCount,
       updatedAt: now,
-      warning: result.complete ? null : (result.warning || "Only records loaded by the current portal page were captured; pagination is incomplete."),
+      warning: result.warning || (result.complete ? null : "Only records loaded by the current portal page were captured; pagination is incomplete."),
       range: result.range || null,
       requestedRange: result.source === "ezpass" ? range : result.range || null,
       chunkCount: result.chunkCount || 1,
