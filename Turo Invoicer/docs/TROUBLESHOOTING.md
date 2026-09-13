@@ -83,6 +83,8 @@ If rows remain unsupported, provide only the page path, column headings, and num
 
 ### Search incomplete after filtering
 
+Version 0.5.9 recognizes the Tag/Plate menu's numbered choice containers when E-ZPass omits a reliable option role. If the menu visibly lists the full tag or plate but an older extension reports that options did not finish loading, reload the unpacked extension and the transactions tab. Choices are scoped to the active combobox listbox and compared exactly; partial matches and dropped leading zeros remain invalid.
+
 Version 0.5.8 waits for the E-ZPass table to change, a fresh observed response, or a loading transition after Search. It then requires stable matching rows or a sustained empty result. If a search still stalls after one safe retry, the affected trip shows `search_incomplete` with a sanitized reason such as `search_not_applied`, `filters_not_confirmed`, `loading`, or `page_not_advanced`. Other verified trip results remain visible, but the incomplete trip cannot enter evidence or a batch. Reload the E-ZPass Transactions tab and retry sync. A route change, ambiguous controls, or failed filter restoration still preserves the prior state instead of saving a partial run.
 
 On `chrome://extensions`, inspect extension errors and open the service-worker inspector. Inspect the portal DOM locally to locate card boundaries, stable IDs, and full timestamp fields. Inspect the popup to diagnose rendering errors.

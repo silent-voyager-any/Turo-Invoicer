@@ -277,6 +277,53 @@ test("waits for a slowly hydrated exact identifier menu before typing", async ()
   assert.equal(fixture.combo.events.some((event) => event.type === "input"), false);
 });
 
+test("reads live E-ZPass numbered option containers scoped to the active listbox", async () => {
+  const combo = new TestInputElement();
+  let options = [];
+  const listbox = visibleElement({ id: ":rj:-listbox", querySelectorAll(selector) {
+    return selector === "[id]" ? options : [];
+  } });
+  Object.assign(combo, visibleElement({ readOnly: false, disabled: false,
+    attributes: { "aria-controls": ":rj:-listbox" }, focus() {}, select() {}, setSelectionRange() {},
+    dispatchEvent() { return true; }, click() {
+      setTimeout(() => { options = [
+        visibleElement({ id: ":rj:-group-0", textContent: "Tag #" }),
+        visibleElement({ id: ":rj:-option-4", textContent: "00813641718", click() { combo.value = this.textContent; } })
+      ]; }, 150);
+    }
+  }));
+  context.document = { body: { textContent: "" },
+    getElementById: (id) => id === ":rj:-listbox" ? listbox : null,
+    querySelector: () => null, querySelectorAll: () => [visibleElement({ id: ":other:-option-4", textContent: "00813641718" })] };
+  const query = { kind: "tag", canonicalIdentifier: "00813641718", identifier: "00813641718" };
+  await api.testing.selectIdentifier(combo, query);
+  assert.equal(combo.value, "00813641718");
+  assert.equal(api.testing.identifierOptions(combo).length, 1);
+});
+
+test("numbered option fallback never accepts unrelated or partial identifiers", () => {
+  const combo = visibleElement({ attributes: { "aria-controls": ":rj:-listbox" } });
+  const listbox = visibleElement({ id: ":rj:-listbox", querySelectorAll: (selector) => selector === "[id]" ? [
+    visibleElement({ id: ":rj:-option-0", textContent: "Tag # 123" }),
+    visibleElement({ id: ":other:-option-1", textContent: "00123" })
+  ] : [] });
+  context.document = { body: { textContent: "" }, getElementById: () => listbox,
+    querySelector: () => null, querySelectorAll: () => [] };
+  assert.equal(api.testing.identifierOptions(combo).length, 1);
+  assert.equal(api.testing.uniqueIdentifierOption({ kind: "tag", canonicalIdentifier: "00123" }, combo), null);
+});
+
+test("identifier options follow a React-replaced live combobox", () => {
+  const fixture = labelledFilterFixture();
+  fixture.identifier.attributes = { "aria-controls": ":live:-listbox" };
+  const oldCombo = visibleElement({ attributes: { "aria-controls": ":old:-listbox" } });
+  const option = visibleElement({ id: ":live:-option-0", textContent: "00813641718" });
+  const listbox = visibleElement({ id: ":live:-listbox", querySelectorAll: (selector) => selector === "[id]" ? [option] : [] });
+  context.document.getElementById = (id) => id === ":live:-listbox" ? listbox : null;
+  assert.equal(api.testing.liveIdentifierCombo(oldCombo), fixture.identifier);
+  assert.equal(api.testing.uniqueIdentifierOption({ kind: "tag", canonicalIdentifier: "00813641718" }, oldCombo), option);
+});
+
 test("classifies a genuinely absent configured identifier without exposing its value", async () => {
   const fixture = identifierFixture({ canonicalIdentifier: "999999", optionText: "000123" });
   await assert.rejects(api.testing.selectIdentifier(fixture.combo, fixture.query), (error) => {

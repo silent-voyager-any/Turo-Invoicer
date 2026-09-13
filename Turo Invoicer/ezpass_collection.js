@@ -646,11 +646,25 @@
     return candidates;
   }
 
+  function liveIdentifierCombo(fallback) {
+    try { return transactionFilterControls(visibleDateInputs()).identifier; }
+    catch { return fallback; }
+  }
+
   function identifierOptions(combo = null) {
-    const listboxId = combo?.getAttribute?.("aria-controls");
+    combo = liveIdentifierCombo(combo);
+    const listboxId = combo?.getAttribute?.("aria-controls") || combo?.getAttribute?.("aria-owns");
     const listbox = listboxId ? document.getElementById?.(listboxId) : null;
     const root = listbox && isVisible(listbox) ? listbox : document;
-    return controls(root, '[role="option"]').filter(isVisible);
+    const semantic = controls(root, '[role="option"]').filter(isVisible);
+    if (semantic.length) return semantic;
+    if (!listbox || !isVisible(listbox) || !/-listbox$/.test(listboxId)) return [];
+    // The live Tag/Plate list currently exposes choices as numbered containers
+    // (e.g. :rj:-option-4) without a reliable option role. Only accept nodes
+    // belonging to this combobox's own visible listbox, never page-wide text.
+    const prefix = listboxId.slice(0, -"listbox".length) + "option-";
+    return controls(listbox, "[id]").filter((node) => isVisible(node) &&
+      String(node.id || "").startsWith(prefix) && /^\d+$/.test(String(node.id).slice(prefix.length)));
   }
 
   function uniqueIdentifierOption(query, combo = null) {
@@ -686,6 +700,7 @@
   }
 
   async function typeIdentifierFilter(combo, query) {
+    combo = liveIdentifierCombo(combo);
     const input = identifierInput(combo);
     if (!input || isDisabled(input) || input.readOnly || input.getAttribute?.("aria-readonly") === "true") return false;
     const value = String(query.canonicalIdentifier || "");
@@ -716,13 +731,12 @@
     // The live portal mounts its listbox asynchronously. Do not type into the
     // combobox merely because the requested option was absent after one frame.
     let option = await waitForIdentifierOption(combo, query, IDENTIFIER_MENU_SETTLE_MS);
-    const populatedMenu = identifierOptions(combo).length > 0;
     if (!option) {
       const typed = await typeIdentifierFilter(combo, query);
       option = await waitForIdentifierOption(combo, query, typed ? 5000 : 2500);
     }
     if (!option) {
-      if (!populatedMenu) throw new Error("E-ZPass tag/plate options did not finish loading; the identifier could not be verified.");
+      if (!identifierOptions(combo).length) throw new Error("E-ZPass tag/plate options did not finish loading; the identifier could not be verified.");
       throw unavailableIdentifierError(combo, query);
     }
     await portalAction(option, "exact tag/plate selection");
@@ -981,6 +995,7 @@
       sessionExpiryDialogs, continueActiveSessionIfNeeded,
       accessibleControlName, namedCombos, transactionFilterControls,
       optionIdentifierCandidates, identifierOptions, uniqueIdentifierOption, waitForIdentifierOption,
+      liveIdentifierCombo,
       unavailableIdentifierError, typeIdentifierFilter, selectIdentifier,
       recordMatchesQuery, mergeQueryRecord, collectFilteredPages, samplePage, searchResultFits, waitForSearchResult,
       snapshotFilters, applyQuery, restoreFilters }),

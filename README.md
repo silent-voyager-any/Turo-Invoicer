@@ -4,7 +4,7 @@ A local-first Chrome extension that helps Turo hosts reconcile NY E-ZPass toll a
 
 The extension observes data loaded in your signed-in browser tabs, matches toll timestamps to trip intervals, and presents suggestions for review. It does not require a server, store portal passwords, or submit reimbursement claims.
 
-> **Status: evidence-ready personal release, version 0.5.8.** The extension verifies Turo trips, searches E-ZPass per trip and exact confirmed identifier, groups matches, captures visible evidence locally, and requires individual plus immutable batch approval. Reimbursement submission remains disabled pending verified upload fixtures.
+> **Status: evidence-ready personal release, version 0.5.9.** The extension verifies Turo trips, searches E-ZPass per trip and exact confirmed identifier, groups matches, captures visible evidence locally, and requires individual plus immutable batch approval. Reimbursement submission remains disabled pending verified upload fixtures.
 
 ## Features
 
@@ -19,7 +19,11 @@ The extension observes data loaded in your signed-in browser tabs, matches toll 
 - Local snapshots, atomic two-source sync, and a clear-data control.
 - No backend uploads, analytics, remote scripts, or automatic claim submission.
 
-## Version 0.5.8 update
+## Version 0.5.9 update
+
+The E-ZPass Tag/Plate dropdown can expose numbered option containers without a reliable `role="option"`. The collector now recognizes these only inside the active combobox's visible listbox, preserving exact full-identifier matching and leading zeros. This fixes the false “options did not finish loading” error when the menu is actually populated.
+
+Version 0.5.8 fixed search completion:
 
 E-ZPass searches now wait for a post-Search result transition. A stalled search is retried once after a safe filter reset; if it still stalls, that trip is marked `search_incomplete` while other verified trips remain reviewable. A partial run blocks evidence and approval for the affected trip and retains the previous complete normalized snapshot separately.
 
