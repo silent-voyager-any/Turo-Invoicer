@@ -4,7 +4,7 @@ A local-first Chrome extension that helps Turo hosts reconcile NY E-ZPass toll a
 
 The extension observes data loaded in your signed-in browser tabs, matches toll timestamps to trip intervals, and presents suggestions for review. It does not require a server, store portal passwords, or submit reimbursement claims.
 
-> **Status: evidence-ready personal release, version 0.5.9.** The extension verifies Turo trips, searches E-ZPass per trip and exact confirmed identifier, groups matches, captures visible evidence locally, and requires individual plus immutable batch approval. Reimbursement submission remains disabled pending verified upload fixtures.
+> **Initial functional reconciliation release: v0.5.13.** The extension verifies completed Turo trips, searches E-ZPass by exact confirmed tag or plate, groups matched tolls, and supports local evidence and batch approval. It does **not** submit reimbursement claims to Turo; hosts must review results and submit claims themselves.
 
 ## Features
 
@@ -12,14 +12,21 @@ The extension observes data loaded in your signed-in browser tabs, matches toll 
 - Local fetch/XHR response observation and defensive DOM fallbacks.
 - History-only Turo collection excludes upcoming and in-progress trips.
 - Both portal collectors wait up to 20 seconds for usable records.
-- E-ZPass toll-posting capture, credit filtering, table/grid fallbacks, and manual per-vehicle tag entry.
+- E-ZPass toll-posting capture, credit filtering, table/grid fallbacks, and a refreshable account tag/plate list with manual fallback.
 - America/New_York time normalization, including daylight-saving ambiguity detection.
 - Inclusive trip-window matching with optional grace periods.
-- Tag/plate-to-Turo-vehicle mappings and explicit overlap/conflict review.
+- Dated tag/plate-to-Turo-vehicle assignments, inline unresolved-toll review, and explicit overlap/conflict handling.
+- Automatic Batch inclusion for ready trips, with per-trip removal, evidence capture, and local approval.
 - Local snapshots, atomic two-source sync, and a clear-data control.
 - No backend uploads, analytics, remote scripts, or automatic claim submission.
 
-## Version 0.5.9 update
+## Initial release: v0.5.13
+
+The four-page dashboard now lets hosts link verified E-ZPass account identifiers to discovered Turo vehicles, review unresolved tolls inline, and see ready trips enter Batch automatically. Identifier-list refresh leaves the saved trip/toll snapshot intact. Exact identifier, time-window, pagination, and source-completeness checks still fail closed when the portal cannot be verified. See [release notes](RELEASE_NOTES.md) for capabilities, migration, verification, and limitations.
+
+### Earlier development updates
+
+Version 0.5.9 fixed numbered E-ZPass options:
 
 The E-ZPass Tag/Plate dropdown can expose numbered option containers without a reliable `role="option"`. The collector now recognizes these only inside the active combobox's visible listbox, preserving exact full-identifier matching and leading zeros. This fixes the false “options did not finish loading” error when the menu is actually populated.
 
@@ -59,7 +66,7 @@ The version 0.2.2 Turo behavior remains in place:
 
 History cards such as `baseTripCard` can show only month/day dates and a vehicle name. During explicit sync, the extension now converts those numeric reservation links into narrowly allowlisted, same-origin JSON detail requests. It reads the endpoint's epoch trip boundaries and stable vehicle ID, never guessing a year, time, or ID from the card label. Reads are bounded and cancelled on navigation; malformed, redirected, oversized, signed-out, and unsupported responses preserve prior results. No new permissions are needed.
 
-Sync starts only from `https://turo.com/us/en/trips/history` and `https://www.e-zpassny.com/ezpass/dashboard/transactions`; only history-linked Turo details may be read additionally. Use the E-ZPass portal's date, plate, and tag filters yourself. The dashboard provides manual dated vehicle-ID/tag/plate entry; Turo is not assumed to expose transponder numbers. Old pre-history snapshots are retired while valid vehicle mappings are retained. Reload the extension and both tabs after updating.
+Sync starts only from `https://turo.com/us/en/trips/history` and `https://www.e-zpassny.com/ezpass/dashboard/transactions`; only history-linked Turo details may be read additionally. The extension performs exact per-trip E-ZPass searches in a temporary tab and preserves the existing user tab. Turo is not assumed to expose transponder numbers. Reload the extension and both portal tabs after updating.
 
 ## Quick start
 
@@ -68,8 +75,9 @@ Sync starts only from `https://turo.com/us/en/trips/history` and `https://www.e-
 3. Enable **Developer mode**, select **Load unpacked**, and choose the **`Turo Invoicer` subfolder** containing `manifest.json`—not the repository root.
 4. Keep exactly one Turo tab and one NY E-ZPass tab open. Sign in through the portals normally.
 5. Reload both portal tabs after installing or updating the extension. Open Turo's trip-history page and the E-ZPass dashboard transactions page.
-6. Load the required date ranges/pages, open the extension, and select **Sync open tabs**.
-7. Review suggestions, configure vehicle mappings, and manually verify timestamps, amounts, identity, and source completeness before any billing action.
+6. Open the extension dashboard and choose **Find uncharged trips**. Leave both signed-in portal tabs open while it runs.
+7. On Vehicles, refresh the E-ZPass identifier list, link the correct plates/tags, and review any unresolved tolls. Matching and Batch recalculate locally without another trip sync.
+8. Check the auto-added Batch trips, remove exceptions, capture evidence from the visible E-ZPass tab through the toolbar popup, and approve only after manually verifying timestamps, amounts, identity, and source completeness.
 
 See the [user guide](Turo%20Invoicer/docs/USER_GUIDE.md) for the full workflow.
 
@@ -85,14 +93,14 @@ npm test
 npm run check
 ```
 
-The current suite contains 136 tests. Checks cover manifest references, the intended permissions, and JavaScript syntax. Tests use synthetic data and mocked Chrome/DOM interfaces; authenticated smoke-check account data is never committed.
+The v0.5.13 suite contains 162 tests. Checks cover manifest references, intended permissions, and JavaScript syntax. Tests use synthetic data and mocked Chrome/DOM interfaces; passing them does not replace a live portal acceptance check. Authenticated account data is not committed.
 
 ## Documentation
 
 | Guide | Contents |
 | --- | --- |
 | [Product plan](PROJECT_PLAN.md) | Fleet dashboard, evidence, invoice safeguards, milestones, and acceptance criteria |
-| [Trip batch workflow](TRIP_BATCH_WORKFLOW.md) | Complete pagination, uncharged-trip discovery, trip-grouped toll selection, evidence, and batch execution |
+| [Trip batch workflow](TRIP_BATCH_WORKFLOW.md) | Historical workflow design; the current dashboard and user guide are authoritative |
 | [Documentation index](Turo%20Invoicer/docs/README.md) | Reading paths and source map |
 | [User guide](Turo%20Invoicer/docs/USER_GUIDE.md) | Installation, sync, mappings, results, clearing data |
 | [Architecture](Turo%20Invoicer/docs/ARCHITECTURE.md) | Execution contexts, SPA waiting, messages, limits |
@@ -124,7 +132,7 @@ Turo Invoicer/              Load this folder as the extension
 
 ## Important limitations
 
-Authenticated portal adapters remain private-UI integrations and may change. The current release proves terminal Turo history and E-ZPass pagination states, but it does not verify statement totals or account ownership. Network capture takes precedence over DOM capture, and missing stable IDs can collapse identical-looking transactions. Clear captures and reload before switching accounts.
+Authenticated portal adapters remain private-UI integrations and may change. The current release checks terminal Turo history and E-ZPass query completion, but it does not verify statement totals or account ownership. Network capture takes precedence over DOM capture, and missing stable IDs can collapse identical-looking transactions. Clear captures and reload before switching accounts.
 
 A timestamp-only suggestion does not establish vehicle identity. Static mappings cannot safely represent a transponder moved between vehicles over time. The project is not an official integration with Turo or E-ZPass and makes no guarantee about portal access or anti-bot behavior.
 

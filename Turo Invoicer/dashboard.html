@@ -34,12 +34,18 @@
         <p class="help">Choose a discovered Turo vehicle, then confirm its plate or add one or more E-ZPass tags. The internal Turo ID identifies the car inside Turo; it is never used as an E-ZPass tag.</p>
         <div class="vehicle-layout">
           <form id="assignmentForm">
+            <div class="form-heading"><div><h3>Link an identifier</h3><p id="inventoryStatus" class="muted">E-ZPass identifiers have not been loaded.</p></div><button id="refreshIdentifiersButton" class="secondary" type="button">Refresh E-ZPass list</button></div>
             <label>Turo vehicle<input id="vehicleId" list="vehicleOptions" maxlength="100" required placeholder="Choose a discovered vehicle" /></label><datalist id="vehicleOptions"></datalist>
             <label>Vehicle label (optional)<input id="vehicleLabel" maxlength="100" placeholder="Example: BMW X1 — black" /></label>
-            <label>Identifier type<select id="identifierKind"><option value="tag">E-ZPass tag</option><option value="plate">License plate</option></select></label>
-            <label>Tag or plate<input id="identifier" maxlength="100" required placeholder="Leading zeros are preserved" /></label>
+            <label>E-ZPass account identifier<select id="accountIdentifier"><option value="">Choose a verified tag or plate</option></select></label>
+            <button id="manualIdentifierButton" class="text-button manual-toggle" type="button">Enter an identifier manually</button>
+            <div id="manualIdentifierFields" class="manual-fields" hidden>
+              <label>Identifier type<select id="identifierKind"><option value="tag">E-ZPass tag</option><option value="plate">License plate</option></select></label>
+              <label>Tag or plate<input id="identifier" maxlength="100" required placeholder="Leading zeros are preserved" /></label>
+              <p id="identifierPreview" class="muted">Manual values must exactly match an E-ZPass tag or plate.</p>
+            </div>
             <div class="date-grid"><label>Effective from<input id="validFrom" type="date" /></label><label>Effective through<input id="validTo" type="date" /></label></div>
-            <button class="primary" type="submit">Save vehicle assignment</button>
+            <button class="primary" type="submit">Link identifier to vehicle</button>
           </form>
           <div><h3>Discovered and configured vehicles</h3><div id="assignmentList" class="stack"></div></div>
         </div>
@@ -65,11 +71,10 @@
         <div class="batch-summary"><strong id="batchTrips">0 trips</strong><strong id="batchTolls">0 tolls</strong><strong id="batchTotal">$0.00</strong></div>
         <div id="batchList" class="stack"></div>
         <div class="inline-actions batch-action">
-          <button id="prepareButton">Prepare evidence from E-ZPass</button>
+          <button id="goEvidenceButton">Go to E-ZPass for evidence</button>
           <button id="approveBatchButton" class="primary">Approve unchanged batch</button>
-          <button id="runBatchButton" class="primary">Run approved batch</button>
         </div>
-        <p class="safety">To capture evidence, keep E-ZPass Transactions active and use Prepare evidence in the toolbar popup. Version 0.5.9 stores evidence and approvals locally; incomplete trip searches remain blocked. Final Turo submission remains fail-closed until its upload adapter is verified.</p>
+        <p class="safety">Evidence capture requires the visible E-ZPass Transactions tab. Use “Go to E-ZPass for evidence,” then open the extension toolbar popup and choose Prepare evidence. Version 0.5.13 prepares and approves drafts locally; it does not submit reimbursement claims to Turo.</p>
       </section>
 
       <footer><button id="clearButton" class="text-button">Clear local data</button></footer>

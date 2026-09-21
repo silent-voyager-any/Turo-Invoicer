@@ -8,7 +8,7 @@ const PATTERNS = { turo: ["https://turo.com/*"], ezpass: ["https://www.e-zpassny
 const MAX_RECORDS = 5000;
 const HISTORY_PATH = "/us/en/trips/history";
 const TRANSACTIONS_PATH = "/ezpass/dashboard/transactions";
-const EZPASS_COLLECTOR_REVISION = "0.5.9-trip-query-11";
+const EZPASS_COLLECTOR_REVISION = "0.5.12-trip-query-14";
 const TURO_INVOICE_ADAPTER_REVISION = "0.4.7-invoice-dom-1";
 const STANDARD_TOLL_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const TRUSTED_PAGES = new Set(["popup.html", "dashboard.html"]);
@@ -29,7 +29,7 @@ let operations = Promise.resolve();
 const evidenceSessions = new Map();
 
 const emptyState = () => ({
-  version: 5,
+  version: 6,
   sources: {
     turo: { records: [], updatedAt: null },
     ezpass: { records: [], updatedAt: null }
@@ -37,7 +37,7 @@ const emptyState = () => ({
   settings: {
     timeZone: DEFAULT_TIME_ZONE, graceMinutes: 0
   },
-  fleet: { vehicles: [], assignments: [] },
+  fleet: { vehicles: [], assignments: [], identifierInventory: { items: [], updatedAt: null } },
   uiDrafts: { vehicleAssignment: {} },
   collectionRuns: {
     turo: { complete: false, pageCount: 0, recordCount: 0, updatedAt: null, warning: "Not collected." },
@@ -59,15 +59,30 @@ const storageReady = chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED
 async function getState() {
   await storageReady;
   const stored = (await chrome.storage.local.get(STORAGE_KEY))[STORAGE_KEY];
-  if (stored?.version === 5) {
+  if (stored?.version === 6) {
+    const inventoryMissing = !stored.fleet?.identifierInventory;
+    stored.fleet ||= { vehicles: [], assignments: [] };
+    if (!Array.isArray(stored.fleet.vehicles)) stored.fleet.vehicles = [];
+    if (!Array.isArray(stored.fleet.assignments)) stored.fleet.assignments = [];
+    stored.fleet.identifierInventory ||= { items: [], updatedAt: null };
     const changed = hydrateCanonicalAssignments(stored);
     const state = reconcile(stored);
-    if (changed) await save(state);
+    if (changed || inventoryMissing) await save(state);
+    return state;
+  }
+  if (stored?.version === 5) {
+    const fresh = emptyState();
+    Object.assign(fresh, stored, { version: 6, batchApproval: null });
+    fresh.fleet = { vehicles: [], assignments: [], ...(stored.fleet || {}), identifierInventory: { items: [], updatedAt: null } };
+    hydrateCanonicalAssignments(fresh);
+    const state = reconcile(fresh);
+    await save(state);
     return state;
   }
   if (stored?.version === 4) {
     const fresh = emptyState();
-    Object.assign(fresh, stored, { version: 5, batchApproval: null });
+    Object.assign(fresh, stored, { version: 6, batchApproval: null });
+    fresh.fleet = { vehicles: [], assignments: [], ...(stored.fleet || {}), identifierInventory: { items: [], updatedAt: null } };
     fresh.evidence = Array.isArray(stored.evidence) ? stored.evidence : [];
     hydrateCanonicalAssignments(fresh);
     const state = reconcile(fresh);
@@ -122,6 +137,10 @@ async function save(state) {
 function reconcile(state) {
   const { completed } = selectCompletedTrips(state.sources.turo.records, { timeZone: state.settings.timeZone });
   rebuildVehicles(state);
+  const activeQueryIds = new Set(flattenTripQueries(buildTripQueryJobs({
+    trips: completed, tripEligibility: state.tripEligibility, assignments: state.fleet.assignments,
+    graceMinutes: state.settings.graceMinutes, timeZone: state.settings.timeZone
+  })).map((query) => query.queryId));
   state.reconciliation = reconcileTolls(
     state.sources.ezpass.records, completed, {
       ...state.settings, vehicleAssignments: state.fleet?.assignments || []
@@ -133,6 +152,7 @@ function reconcile(state) {
     previousDrafts: state.invoiceDrafts,
     tripEligibility: state.tripEligibility,
     collectionRuns: state.collectionRuns,
+    activeQueryIds,
     submissionLedger: state.submissionLedger,
     evidence: state.evidence,
     timeZone: state.settings.timeZone
@@ -181,6 +201,225 @@ async function tabRequest(tabId, message, timeoutMs = 5000) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+const EZPASS_TRANSACTIONS_URL = "https://www.e-zpassny.com/ezpass/dashboard/transactions";
+const portalDate = (iso) => {
+  const match = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) throw new Error("E-ZPass direct query received an invalid trip date.");
+  return `${match[2]}/${match[3]}/${match[1]}`;
+};
+
+function ezpassQueryUrl(query, portalIdentifier) {
+  if (typeof portalIdentifier !== "string" || !portalIdentifier.trim() || portalIdentifier.length > 80) {
+    throw new Error("E-ZPass direct query received an invalid resolved identifier.");
+  }
+  const url = new URL(EZPASS_TRANSACTIONS_URL);
+  url.searchParams.set("tagOrPlateNumber", portalIdentifier);
+  url.searchParams.set("transactionType", "TOLL");
+  url.searchParams.set("endDate", portalDate(query.endDate));
+  url.searchParams.set("startDate", portalDate(query.startDate));
+  return url.href;
+}
+
+function exactUrl(actual, expected) {
+  try { return new URL(actual).href === new URL(expected).href; }
+  catch { return false; }
+}
+
+async function readManagedEzpassPage(tabId, url, message, active = false) {
+  const updated = await chrome.tabs.update(tabId, { url, active });
+  if (updated?.id !== tabId) throw new Error("E-ZPass query tab changed unexpectedly.");
+  const deadline = Date.now() + 25000;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab?.url) {
+      let parsed;
+      try { parsed = new URL(tab.url); } catch { throw new Error("E-ZPass query tab returned an invalid URL."); }
+      if (!["https://www.e-zpassny.com", "https://e-zpassny.com"].includes(parsed.origin) ||
+          parsed.pathname.replace(/\/$/, "") !== TRANSACTIONS_PATH) {
+        throw new Error("E-ZPass query tab left the authenticated transactions page.");
+      }
+    }
+    if (tab?.status === "complete" && exactUrl(tab.url, url)) {
+      let response;
+      try {
+        response = await tabRequest(tabId, message, 20000);
+      } catch (error) { lastError = error; }
+      if (response && response.collectorRevision !== EZPASS_COLLECTOR_REVISION) {
+        throw new Error("The E-ZPass query tab is running an older extension script. Reload that transactions tab, then sync again.");
+      }
+      if (response) return response;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw lastError || new Error("E-ZPass direct-query page timed out.");
+}
+
+const queryNeutral = (record) => {
+  const copy = { ...record };
+  for (const key of ["queryId", "queryReservationId", "queryVehicleId", "queryKind", "queryIdentifier"]) delete copy[key];
+  return copy;
+};
+
+function sanitizeIdentifierInventory(raw) {
+  if (!Array.isArray(raw) || raw.length > 500) throw new Error("E-ZPass returned an invalid identifier inventory.");
+  const items = new Map();
+  for (const candidate of raw) {
+    if (!candidate || !["tag", "plate"].includes(candidate.kind) || typeof candidate.identifier !== "string") continue;
+    const identifier = candidate.identifier.trim().slice(0, 100);
+    const canonicalIdentifier = String(candidate.canonicalIdentifier || "").trim();
+    if (!identifier || !/^[A-Z0-9]+$/.test(canonicalIdentifier)) continue;
+    const key = `${candidate.kind}:${canonicalIdentifier}`;
+    if (items.has(key) && items.get(key).identifier !== identifier) {
+      throw new Error("E-ZPass identifier inventory contains an ambiguous exact match.");
+    }
+    items.set(key, { kind: candidate.kind, identifier, canonicalIdentifier });
+  }
+  return [...items.values()].sort((left, right) => left.kind.localeCompare(right.kind) ||
+    left.canonicalIdentifier.localeCompare(right.canonicalIdentifier));
+}
+
+async function loadEzpassIdentifierInventory() {
+  let managedTab = null;
+  try {
+    managedTab = await chrome.tabs.create({ url: EZPASS_TRANSACTIONS_URL, active: false });
+    if (!Number.isInteger(managedTab?.id)) throw new Error("Could not create the temporary E-ZPass inventory tab.");
+    let response = null, failure = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        response = await readManagedEzpassPage(managedTab.id, EZPASS_TRANSACTIONS_URL,
+          { type: "EZPASS_IDENTIFIER_INVENTORY", queryJobs: [] });
+        if (response?.ok && response.source === "ezpass" && Array.isArray(response.inventory)) break;
+        failure = new Error(response?.error || "E-ZPass identifier inventory failed.");
+        response = null;
+      } catch (error) { failure = error; response = null; }
+    }
+    if (!response) throw failure || new Error("E-ZPass identifier inventory failed.");
+    const items = sanitizeIdentifierInventory(response.inventory);
+    if (!items.length) throw new Error("E-ZPass returned no usable tag or plate identifiers.");
+    return items;
+  } finally {
+    if (Number.isInteger(managedTab?.id)) await chrome.tabs.remove(managedTab.id).catch(() => {});
+  }
+}
+
+async function runEzpassDirectQueries({ queryJobs, tabId = null, evidenceTargets = null, evidenceToken = null }) {
+  if (!Array.isArray(queryJobs) || !queryJobs.length || queryJobs.length > 500) {
+    throw new Error("E-ZPass requires 1-500 direct trip queries.");
+  }
+  let managedTab = null;
+  let originalUrl = null;
+  const records = new Map(), reports = [];
+  let pageCount = 0, rawCount = 0, identifierInventory = [];
+  try {
+    if (Number.isInteger(tabId)) {
+      const existing = await chrome.tabs.get(tabId);
+      if (!isTransactionsUrl(existing?.url)) throw new Error("Keep the active E-ZPass Transactions tab open for evidence capture.");
+      originalUrl = existing.url;
+    } else {
+      managedTab = await chrome.tabs.create({ url: EZPASS_TRANSACTIONS_URL, active: false });
+      tabId = managedTab?.id;
+      if (!Number.isInteger(tabId)) throw new Error("Could not create the temporary E-ZPass query tab.");
+    }
+
+    let inventoryResponse = null, inventoryFailure = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        inventoryResponse = await readManagedEzpassPage(tabId, EZPASS_TRANSACTIONS_URL,
+          { type: "EZPASS_IDENTIFIER_INVENTORY", queryJobs }, Boolean(evidenceToken));
+        if (inventoryResponse?.ok && inventoryResponse.source === "ezpass" && Array.isArray(inventoryResponse.inventory)) break;
+        inventoryFailure = new Error(inventoryResponse?.error || "E-ZPass identifier inventory failed.");
+        inventoryResponse = null;
+      } catch (error) { inventoryFailure = error; inventoryResponse = null; }
+    }
+    if (!inventoryResponse?.ok || inventoryResponse.source !== "ezpass" || !Array.isArray(inventoryResponse.inventory)) {
+      throw inventoryFailure || new Error("E-ZPass identifier inventory failed.");
+    }
+    identifierInventory = sanitizeIdentifierInventory(inventoryResponse.inventory);
+    const inventory = new Map();
+    for (const item of identifierInventory) {
+      const key = `${item.kind}:${item.canonicalIdentifier}`;
+      inventory.set(key, item.identifier);
+    }
+
+    const deadline = Date.now() + 300000;
+    for (const query of queryJobs) {
+      const portalIdentifier = inventory.get(`${query.kind}:${query.canonicalIdentifier}`);
+      if (!portalIdentifier) {
+        reports.push({ queryId: query.queryId, reservationId: query.reservationId, kind: query.kind,
+          pageCount: 0, rawCount: 0, recordCount: 0, complete: false,
+          status: "identifier_unavailable", reason: "identifier_unavailable" });
+        continue;
+      }
+      let response = null, failure = null, failureReason = null;
+      const url = ezpassQueryUrl(query, portalIdentifier);
+      for (let attempt = 0; attempt < 2 && Date.now() < deadline; attempt += 1) {
+        try {
+          response = await readManagedEzpassPage(tabId, url, { type: "COLLECT_EZPASS_QUERY", query,
+            portalIdentifier, ...(evidenceTargets ? { evidenceTargets } : {}), ...(evidenceToken ? { evidenceToken } : {}) },
+          Boolean(evidenceToken));
+          if (!response?.ok || response.source !== "ezpass" || response.complete !== true ||
+              response.completeForRange !== true) {
+            failureReason = ["direct_query_mismatch", "resolved_identifier_invalid", "filters_not_confirmed",
+              "page_not_advanced", "loading", "empty_not_confirmed"].includes(response?.reason)
+              ? response.reason : "direct_query_failed";
+            throw new Error(response?.error || "E-ZPass direct query was incomplete.");
+          }
+          break;
+        } catch (error) {
+          failure = error; response = null;
+          if (["direct_query_mismatch", "resolved_identifier_invalid"].includes(failureReason)) break;
+        }
+      }
+      if (!response) {
+        reports.push({ queryId: query.queryId, reservationId: query.reservationId, kind: query.kind,
+          pageCount: 0, rawCount: 0, recordCount: 0, complete: false,
+          status: "search_incomplete", reason: Date.now() >= deadline ? "run_deadline" : failureReason || "direct_query_failed" });
+        if (evidenceToken) throw failure || new Error("E-ZPass evidence query was incomplete.");
+        continue;
+      }
+      const report = Array.isArray(response.queryReports) ? response.queryReports[0] : null;
+      if (!report || report.queryId !== query.queryId || report.status !== "complete" || report.complete !== true) {
+        throw new Error("E-ZPass direct query returned an inconsistent report.");
+      }
+      pageCount += Number(response.pageCount) || 0;
+      rawCount += Number(response.rawCount) || 0;
+      let accepted = 0;
+      for (const record of response.records || []) {
+        const key = String(record?.id || "");
+        if (!key || record.queryId !== query.queryId || record.queryReservationId !== query.reservationId ||
+            record.queryVehicleId !== query.vehicleId || record.queryKind !== query.kind ||
+            record.queryIdentifier !== query.identifier) {
+          throw new Error("E-ZPass direct query returned unverified provenance.");
+        }
+        const prior = records.get(key);
+        if (prior && JSON.stringify(queryNeutral(prior)) !== JSON.stringify(queryNeutral(record))) {
+          throw new Error("E-ZPass returned conflicting duplicate transaction IDs.");
+        }
+        if (!prior) records.set(key, record);
+        accepted += 1;
+      }
+      reports.push({ ...report, recordCount: accepted });
+    }
+  } finally {
+    if (Number.isInteger(managedTab?.id)) await chrome.tabs.remove(managedTab.id).catch(() => {});
+    else if (Number.isInteger(tabId) && originalUrl && isTransactionsUrl(originalUrl)) {
+      await chrome.tabs.update(tabId, { url: originalUrl, active: true }).catch(() => {});
+    }
+  }
+  const incomplete = reports.filter((report) => report.status === "search_incomplete").length;
+  const unavailable = reports.filter((report) => report.status === "identifier_unavailable").length;
+  return { ok: true, source: "ezpass", collectorRevision: EZPASS_COLLECTOR_REVISION,
+    pagePath: TRANSACTIONS_PATH, records: [...records.values()], queryReports: reports,
+    complete: incomplete === 0, completeForRange: incomplete === 0 && unavailable === 0,
+    pageCount, rawCount, chunkCount: queryJobs.length,
+    terminalReason: incomplete ? "partial_direct_queries" : unavailable ? "available_direct_queries_complete" : "all_direct_queries_complete",
+    identifierInventory,
+    warning: [incomplete ? `${incomplete} E-ZPass direct search${incomplete === 1 ? " is" : "es are"} incomplete.` : null,
+      unavailable ? `${unavailable} configured E-ZPass identifier${unavailable === 1 ? " is" : "s are"} unavailable.` : null]
+      .filter(Boolean).join(" ") || null };
 }
 
 const hubUrl = (id) => `https://turo.com/us/en/reservation/${id}/invoice-hub`;
@@ -281,9 +520,9 @@ async function collect(source, request = {}) {
   }
   try {
     // Turo detail reads share its 20s content deadline; allow 5s for the reply.
-      const response = await tabRequest(tabs[0].id, {
-        type: "COLLECT_NOW", ...(source === "ezpass" ? { range: request.range, queryJobs: request.queryJobs } : {})
-      }, source === "ezpass" ? 305000 : 25000);
+      const response = source === "ezpass"
+        ? await runEzpassDirectQueries({ queryJobs: request.queryJobs })
+        : await tabRequest(tabs[0].id, { type: "COLLECT_NOW" }, 25000);
       if (source === "ezpass" && response?.collectorRevision !== EZPASS_COLLECTOR_REVISION) {
         throw new Error("The E-ZPass tab is running an older extension script. Reload that transactions tab, then sync again.");
       }
@@ -309,7 +548,11 @@ async function collect(source, request = {}) {
         complete: report?.complete === true,
         status: ["complete", "identifier_unavailable", "search_incomplete"].includes(report?.status) ? report.status : null,
         reason: ["run_deadline", "search_not_applied", "loading", "filters_not_confirmed",
-          "empty_not_confirmed", "page_not_advanced"].includes(report?.reason) ? report.reason : null
+          "empty_not_confirmed", "page_not_advanced", "identifier_unavailable", "direct_query_failed",
+          "direct_query_mismatch", "resolved_identifier_invalid", "inventory_drawer_not_open",
+          "inventory_control_not_hydrated", "inventory_control_stale", "inventory_listbox_not_hydrated",
+          "inventory_ambiguous"].includes(report?.reason)
+          ? report.reason : null
       })) : [];
     const expectedQueries = source === "ezpass" ? request.queryJobs || [] : [];
     if (source === "ezpass" && expectedQueries.length && response.complete !== true) {
@@ -348,7 +591,8 @@ async function collect(source, request = {}) {
       observedRange: response.observedRange || null,
       ordering: ["descending", "unverified"].includes(response.ordering) ? response.ordering : "unverified",
       lastPage: Number.isInteger(response.lastPage) && response.lastPage > 0 ? response.lastPage : null,
-      queryReports: reports
+      queryReports: reports,
+      identifierInventory: source === "ezpass" ? sanitizeIdentifierInventory(response.identifierInventory || []) : []
     };
   } catch (error) {
     return { source, ok: false, error: error.message || "Reload the portal tab after installation." };
@@ -356,8 +600,8 @@ async function collect(source, request = {}) {
 }
 
 async function runSync() {
-  // Turo defines the local E-ZPass boundary. The portal list remains unfiltered;
-  // its own transaction timestamps determine which normalized tolls are kept.
+  // Turo defines both the overall collection boundary and each exact per-trip
+  // date range applied to the E-ZPass transaction filter.
   const turo = await collect("turo");
   if (!turo.ok) return { state: await getState(), collection: { turo, ezpass: { ok: false, error: "E-ZPass was not started because Turo collection failed." } }, synced: false };
   const currentState = await getState();
@@ -433,6 +677,9 @@ async function commitSync(state, turo, ezpass, range) {
       lastPage: result.lastPage || null,
       queryReports: result.queryReports || []
     };
+    if (result.source === "ezpass" && Array.isArray(result.identifierInventory)) {
+      state.fleet.identifierInventory = { items: sanitizeIdentifierInventory(result.identifierInventory), updatedAt: now };
+    }
   }
   state.tripEligibility = Object.fromEntries(state.sources.turo.records.map((trip) => [String(trip.id), {
     status: ["eligible_uncharged", "already_charged", "ineligible", "status_unknown"].includes(trip.invoiceStatus)
@@ -598,7 +845,7 @@ async function prepareBatchEvidence() {
   const session = { tabId: tab.id, windowId: tab.windowId, token, evidence: [], allowedQueries: new Set(queryJobs.map((query) => query.queryId)) };
   evidenceSessions.set(token, session);
   try {
-    const response = await tabRequest(tab.id, { type: "COLLECT_NOW", queryJobs, evidenceTargets, evidenceToken: token }, 305000);
+    const response = await runEzpassDirectQueries({ queryJobs, tabId: tab.id, evidenceTargets, evidenceToken: token });
     if (!response?.ok || response.collectorRevision !== EZPASS_COLLECTOR_REVISION || response.complete !== true) {
       throw new Error(response?.error || "E-ZPass evidence searches did not complete.");
     }
@@ -656,6 +903,22 @@ async function handle(message) {
   switch (message?.type) {
     case "GET_STATE": return { state: await getState() };
     case "RUN_SYNC": return runSync();
+    case "REFRESH_EZPASS_IDENTIFIERS": {
+      const state = await getState();
+      const items = await loadEzpassIdentifierInventory();
+      state.fleet.identifierInventory = { items, updatedAt: new Date().toISOString() };
+      return { state: await save(state), inventory: state.fleet.identifierInventory };
+    }
+    case "OPEN_EZPASS_EVIDENCE": {
+      const tabs = (await Promise.all(PATTERNS.ezpass.map((url) => chrome.tabs.query({ url })))).flat()
+        .filter((tab, index, all) => Number.isInteger(tab?.id) && isTransactionsUrl(tab.url) &&
+          all.findIndex((candidate) => candidate.id === tab.id) === index);
+      if (tabs.length !== 1) throw new Error(tabs.length
+        ? "Keep exactly one E-ZPass Transactions tab open before preparing evidence."
+        : "Open the E-ZPass Transactions page before preparing evidence.");
+      await chrome.tabs.update(tabs[0].id, { active: true });
+      return { state: await getState(), tabId: tabs[0].id };
+    }
     case "CLEAR_LOCAL_DATA": return clearData();
     case "UPDATE_SETTINGS": {
       const state = await getState();

@@ -13,7 +13,7 @@ Portal's normal authenticated requests
        |
 Popup/dashboard -- RUN_SYNC --> service worker -- COLLECT_NOW --> Turo history
                                       |-- temporary inactive Turo status tab
-                                      `-- COLLECT_NOW --> E-ZPass transactions
+                                      `-- temporary inactive E-ZPass query tab
 Popup/dashboard <-- results --- service worker <-- normalized records/status
                             |
                      reconciler.js
@@ -63,7 +63,7 @@ After history collection, the worker opens one temporary inactive Turo tab and c
 
 Skeletons alone do not satisfy the wait. Structural completeness does not imply valid dates; the reconciler performs timestamp validation later. Route changes clear captures and cancel pending waits.
 
-Version 0.5.7 builds one E-ZPass search per eligible trip and active confirmed identifier. The content script locates the transaction filter through accessible labels, types six digits into each masked Start or End Date field, and verifies the exact normalized date without opening the calendar widget. It waits for the exact tag/plate list to render and, if a configured identifier is genuinely absent, reports it as unavailable for that trip while continuing the remaining queries; the affected trip is not selectable. A stable nonempty response with no pagination navigation is terminal proof for a single-page query; malformed visible pagination still fails safely. During explicit collection it may activate the unique **continue working** action in the verified session-expiry dialog. It restores the original filters in `finally`. `Lane Txn ID` deduplicates tolls; route changes, restoration errors, and unproven pages preserve the prior snapshot.
+Version 0.5.12 builds one E-ZPass direct URL per eligible trip and active confirmed identifier. A temporary inactive authenticated tab first opens the clean transactions route and waits directly on the exact native Tag/Plate label/control relationship and its hydrated list; inventory does not depend on date, Type, or Search controls. The worker retries this clean inventory page once, then navigates sequentially to URLs containing exactly `tagOrPlateNumber`, `transactionType=TOLL`, `endDate`, and `startDate`. The freshly loaded collector verifies the URL, waits for stable rows or a stable empty result, and validates every toll against the inclusive trip dates and identifier before following pagination. One stalled query is reloaded once. `Lane Txn ID` deduplicates tolls; redirects, extra/duplicate parameters, unavailable or ambiguous identifiers, and unproven pages fail closed. The temporary tab closes in `finally`. Evidence uses the same URLs in the visible E-ZPass tab and restores its original safe transaction URL afterward.
 
 ## Dashboard and fleet state
 
@@ -73,7 +73,7 @@ The popup is a compact launcher and sync status surface. `dashboard.html` is the
 
 Fleet assignments associate a Turo internal vehicle ID with an E-ZPass tag or plate over an inclusive local-date interval. The worker retains raw identifiers, derives canonical comparison values, rejects canonically overlapping ranges, rebuilds vehicle cards from Turo labels/plates, and recalculates reconciliation in its serialized state queue. A discovered Turo plate is only a suggestion until the user confirms it. Review shortcuts store an unfinished `uiDrafts` value; they never create an assignment silently.
 
-Schema 5 builds trip-specific identifier queries and extends drafts with evidence coverage, revision hashes, individual approval, and immutable batch approval. Screenshot blobs live in IndexedDB; reduced evidence metadata remains in extension storage. Submission stays fail-closed until the Turo upload adapter is verified.
+Schema 6 preserves schema-5 records and evidence, adds the sanitized E-ZPass identifier inventory under `fleet`, automatically includes newly ready trips in Batch, and records explicit user removal. Drafts retain evidence coverage, revision hashes, individual approval, and immutable batch approval. Screenshot blobs live in IndexedDB; reduced evidence metadata remains in extension storage. Submission stays fail-closed until the Turo upload adapter is verified.
 
 ## Internal message reference
 
@@ -86,13 +86,17 @@ These are internal extension messages, not a public web API.
 | Dashboard -> worker | `UPDATE_SETTINGS` | `settings` | `ok, state` |
 | Dashboard -> worker | `SAVE_UI_DRAFT` | `draft` | `ok, state` |
 | Dashboard -> worker | `UPSERT_ASSIGNMENT` | `assignment` | `ok, state` |
-| Dashboard -> worker | `DELETE_ASSIGNMENT` | `assignmentId` | `ok, state` |
+| Dashboard -> worker | `DELETE_ASSIGNMENT` | `id` | `ok, state` |
+| Dashboard -> worker | `REFRESH_EZPASS_IDENTIFIERS` | None | `ok, state, inventory`; does not resync source records |
+| Dashboard -> worker | `OPEN_EZPASS_EVIDENCE` | None | `ok, state, tabId`; activates the sole transactions tab |
 | Dashboard -> worker | `SET_TOLL_SELECTION` | `reservationId, tollId, selected` | `ok, state` |
 | Dashboard -> worker | `SET_TRIP_SELECTION` | `reservationId, selected` | `ok, state` |
 | Dashboard -> worker | `SELECT_ALL_READY` | `selected` | `ok, state` |
-| Dashboard -> worker | `PREPARE_BATCH` | None | Error until evidence adapters are verified |
+| Popup -> worker | `PREPARE_BATCH` | None, while E-ZPass Transactions is active | `ok, state, captured` or error |
 | Popup/dashboard -> worker | `CLEAR_LOCAL_DATA` | None | `ok, state, resetFailures` |
-| Worker -> collector | `COLLECT_NOW` | optional `range` | `ok, source, records, complete, pageCount, terminalReason`, or error |
+| Worker -> Turo collector | `COLLECT_NOW` | None | `ok, source, records, complete, pageCount, terminalReason`, or error |
+| Worker -> E-ZPass collector | `EZPASS_IDENTIFIER_INVENTORY` | None | exact sanitized `kind, identifier, canonicalIdentifier` options |
+| Worker -> E-ZPass collector | `COLLECT_EZPASS_QUERY` | `query, portalIdentifier`, optional evidence fields | one verified query result and report, or error |
 | Worker -> temporary Turo tab | `COLLECT_INVOICE_STATUS` | None; route supplies identity | Reduced hub/invoice/select-incidental status only |
 | Worker -> collector | `CLEAR_CAPTURE` | None | `ok` |
 | MAIN -> ISOLATED | `NETWORK_RESPONSE` | `source: "turo-toll-reconciler-page", payload` | No response |
@@ -105,7 +109,7 @@ Privileged worker operations accept only the exact extension popup or dashboard 
 
 The worker queues popup/dashboard operations to serialize read-modify-write state updates. A sync is ordered: Turo history, Turo status verification, then E-ZPass for the derived range. Exactly one matching data-page tab must exist per source; the worker-managed inactive Turo status tab is temporary.
 
-The worker uses bounded tab messages and a five-minute E-ZPass collection deadline. It rechecks source routes and filters Turo to valid completed intervals. Successful complete source batches are sanitized, reconciled, and saved together in one storage item. A source error preserves the previous snapshot.
+The worker uses bounded tab messages and a five-minute E-ZPass collection deadline. It rechecks source routes, requires exact direct-query URLs, and filters Turo to valid completed intervals. Successful complete source batches are sanitized, reconciled, and saved together in one storage item. A source error preserves the previous snapshot.
 
 Updates to settings or fleet assignments recalculate current records and invalidate affected evidence approvals. Schema 5 preserves older sources and fleet assignments but does not upgrade their completeness or invoice status. On worker restart, persisted state and selections are rebuilt from canonical records; an interrupted evidence or submission operation must be retried or reviewed.
 

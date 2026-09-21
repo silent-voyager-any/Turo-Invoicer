@@ -222,6 +222,35 @@
       notify();
     });
 
+    function evidencePageCallback(message) {
+      const evidenceTargets = message.evidenceTargets && typeof message.evidenceTargets === "object"
+        ? message.evidenceTargets : {};
+      return message.evidenceToken ? async (query, pageRecords, pageNumber) => {
+        const wanted = new Set(Array.isArray(evidenceTargets[query.queryId]) ? evidenceTargets[query.queryId].map(String) : []);
+        const covered = pageRecords.map((record) => String(record.id || "")).filter((id) => wanted.has(id));
+        if (!covered.length) return;
+        const rows = new Map(covered.map((id) => [id, [...document.querySelectorAll("tr, [role='row']")].find((candidate) =>
+          String(candidate.textContent || "").includes(id))]).filter(([, row]) => row));
+        const remaining = new Set(rows.keys());
+        while (remaining.size) {
+          const firstId = remaining.values().next().value;
+          rows.get(firstId)?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          const visible = [...remaining].filter((id) => {
+            const rect = rows.get(id)?.getBoundingClientRect?.();
+            return rect && rect.top >= 0 && rect.bottom <= window.innerHeight;
+          });
+          const visibleIds = visible.length ? visible : [firstId];
+          const response = await chrome.runtime.sendMessage({ type: "EVIDENCE_PAGE_READY", token: message.evidenceToken,
+            queryId: query.queryId, reservationId: query.reservationId, kind: query.kind,
+            identifier: query.identifier, startDate: query.startDate, endDate: query.endDate,
+            pageNumber, coveredTollIds: visibleIds });
+          if (!response?.ok) throw new Error(response?.error || "Evidence screenshot failed.");
+          visibleIds.forEach((id) => remaining.delete(id));
+        }
+      } : null;
+    }
+
     chrome.runtime.onMessage.addListener((message, sender, reply) => {
       if (sender.id !== chrome.runtime.id || sender.tab) return false;
       if (message?.type === "CLEAR_CAPTURE") {
@@ -236,7 +265,7 @@
         for (const check of [...pending]) check.cancel("Capture cleared while waiting for portal data.");
         options.enrichment?.reset();
         reply({ ok: true });
-      } else if (message?.type === "COLLECT_NOW") {
+      } else if (["COLLECT_NOW", "EZPASS_IDENTIFIER_INVENTORY", "COLLECT_EZPASS_QUERY"].includes(message?.type)) {
         const collectReply = (value) => reply({
           ...value,
           ...(options.collectorRevision ? { collectorRevision: options.collectorRevision } : {})
@@ -246,35 +275,24 @@
           return false;
         }
         paused = false;
+        if (message.type === "EZPASS_IDENTIFIER_INVENTORY" && typeof options.identifierInventory === "function") {
+          Promise.resolve(options.identifierInventory())
+            .then((inventory) => collectReply({ ok: true, source, pagePath: capturePath, inventory }))
+            .catch((error) => collectReply({ ok: false, source, error: error?.message || "Identifier inventory failed.",
+              code: error?.code || null, reason: error?.reason || null }));
+          return true;
+        }
+        if (message.type === "COLLECT_EZPASS_QUERY" && typeof options.collectQuery === "function") {
+          Promise.resolve(options.collectQuery({ query: message.query, portalIdentifier: message.portalIdentifier,
+            parseRecord, readDom, onEvidencePage: evidencePageCallback(message), getNetworkRevision: () => networkMessages }))
+            .then((result) => collectReply({ ok: true, source, pagePath: capturePath, ...result }))
+            .catch((error) => collectReply({ ok: false, source, error: error?.message || "Direct query collection failed.",
+              code: error?.code || null, reason: error?.reason || null }));
+          return true;
+        }
         if (typeof options.collect === "function" && (message.range || message.queryJobs)) {
-          const evidenceTargets = message.evidenceTargets && typeof message.evidenceTargets === "object"
-            ? message.evidenceTargets : {};
-          const onEvidencePage = message.evidenceToken ? async (query, pageRecords, pageNumber) => {
-            const wanted = new Set(Array.isArray(evidenceTargets[query.queryId]) ? evidenceTargets[query.queryId].map(String) : []);
-            const covered = pageRecords.map((record) => String(record.id || "")).filter((id) => wanted.has(id));
-            if (!covered.length) return;
-            const rows = new Map(covered.map((id) => [id, [...document.querySelectorAll("tr, [role='row']")].find((candidate) =>
-              String(candidate.textContent || "").includes(id))]).filter(([, row]) => row));
-            const remaining = new Set(rows.keys());
-            while (remaining.size) {
-              const firstId = remaining.values().next().value;
-              rows.get(firstId)?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-              await new Promise((resolve) => setTimeout(resolve, 150));
-              const visible = [...remaining].filter((id) => {
-                const rect = rows.get(id)?.getBoundingClientRect?.();
-                return rect && rect.top >= 0 && rect.bottom <= window.innerHeight;
-              });
-              const visibleIds = visible.length ? visible : [firstId];
-              const response = await chrome.runtime.sendMessage({ type: "EVIDENCE_PAGE_READY", token: message.evidenceToken,
-                queryId: query.queryId, reservationId: query.reservationId, kind: query.kind,
-                identifier: query.identifier, startDate: query.startDate, endDate: query.endDate,
-                pageNumber, coveredTollIds: visibleIds });
-              if (!response?.ok) throw new Error(response?.error || "Evidence screenshot failed.");
-              visibleIds.forEach((id) => remaining.delete(id));
-            }
-          } : null;
           Promise.resolve(options.collect({ range: message.range, queryJobs: message.queryJobs, parseRecord, readDom,
-            onEvidencePage, getNetworkRevision: () => networkMessages }))
+            onEvidencePage: evidencePageCallback(message), getNetworkRevision: () => networkMessages }))
             .then((result) => collectReply({ ok: true, source, pagePath: capturePath, ...result }))
             .catch((error) => collectReply({ ok: false, source, error: error?.message || "Portal collection failed." }));
           return true;

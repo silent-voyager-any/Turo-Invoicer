@@ -7,7 +7,7 @@
   const PAGE_TIMEOUT_MS = 15000;
   const SETTLE_MS = 350;
   const EMPTY_SETTLE_MS = 1800;
-  const IDENTIFIER_MENU_SETTLE_MS = 1500;
+  const IDENTIFIER_MENU_SETTLE_MS = 2000;
 
   const isoParts = (value) => {
     if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -139,6 +139,13 @@
   }
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  function adapterError(message, code, reason) {
+    const error = new Error(message);
+    error.code = code;
+    error.reason = reason;
+    return error;
+  }
+
   async function waitFor(predicate, timeoutMs, message) {
     const end = Date.now() + timeoutMs;
     while (Date.now() < end) {
@@ -188,6 +195,11 @@
       const date = stamp ? `${stamp.slice(0, 4)}-${stamp.slice(4, 6)}-${stamp.slice(6, 8)}` : null;
       return recordMatchesQuery(record, query) && date >= query.startDate && date <= query.endDate;
     });
+  }
+
+  function recordLocalDate(record) {
+    const stamp = localTimestampKey(rawTimestamp(record));
+    return stamp ? `${stamp.slice(0, 4)}-${stamp.slice(4, 6)}-${stamp.slice(6, 8)}` : null;
   }
 
   async function waitForSearchResult({ baseline, baselineRevision, getNetworkRevision, query, readDom, parseRecord,
@@ -452,6 +464,59 @@
     }, 3000, "E-ZPass transaction filters did not open.");
   }
 
+  function inventoryIdentifierCombo() {
+    const labels = controls(transactionMain(), "label").filter((label) =>
+      isVisible(label) && compactText(label.textContent).toLowerCase() === "tag/plate #");
+    if (labels.length > 1) throw adapterError("E-ZPass identifier inventory found multiple Tag/Plate # labels.",
+      "EZPASS_INVENTORY_AMBIGUOUS", "inventory_ambiguous");
+    if (!labels.length) return null;
+    const label = labels[0];
+    const id = String(label.htmlFor || label.getAttribute?.("for") || "");
+    const combo = label.control || (id ? document.getElementById?.(id) : null);
+    if (!combo || combo.isConnected === false || !isVisible(combo) ||
+        combo.getAttribute?.("role") !== "combobox" || accessibleControlName(combo) !== "Tag/Plate #") return null;
+    return combo;
+  }
+
+  async function ensureInventoryDrawerOpen() {
+    if (controls(transactionMain(), "label").some((label) =>
+      isVisible(label) && compactText(label.textContent).toLowerCase() === "tag/plate #")) return;
+    const matches = buttons(transactionMain()).filter((node) => isVisible(node) && /^filter$/i.test(normalizedText(node)));
+    if (matches.length !== 1) throw adapterError("E-ZPass transaction Filter control is missing or ambiguous.",
+      "EZPASS_INVENTORY_DRAWER_NOT_OPEN", "inventory_drawer_not_open");
+    await portalAction(matches[0], "identifier inventory drawer");
+    try {
+      await waitFor(() => controls(transactionMain(), "label").some((label) =>
+        isVisible(label) && compactText(label.textContent).toLowerCase() === "tag/plate #"),
+      5000, "E-ZPass identifier inventory drawer did not finish opening.");
+    } catch (error) {
+      if (!/drawer did not finish opening/.test(error.message)) throw error;
+      throw adapterError(error.message, "EZPASS_INVENTORY_DRAWER_NOT_OPEN", "inventory_drawer_not_open");
+    }
+  }
+
+  async function waitForInventoryIdentifierCombo(timeoutMs = 10000) {
+    const end = Date.now() + timeoutMs;
+    let prior = null, sawControl = false, sawReplacement = false;
+    while (Date.now() < end) {
+      assertRoute("identifier inventory control hydration");
+      await continueActiveSessionIfNeeded();
+      const combo = inventoryIdentifierCombo();
+      if (prior && (prior.isConnected === false || combo && combo !== prior)) sawReplacement = true;
+      if (combo) {
+        sawControl = true;
+        prior = combo;
+        if (!isDisabled(combo) && !combo.readOnly && combo.getAttribute?.("aria-readonly") !== "true") return combo;
+      }
+      await sleep(100);
+    }
+    if (sawReplacement) throw adapterError("E-ZPass kept replacing the Tag/Plate control before inventory could start.",
+      "EZPASS_INVENTORY_CONTROL_STALE", "inventory_control_stale");
+    throw adapterError(sawControl ? "E-ZPass Tag/Plate control remained disabled while inventory was loading." :
+      "E-ZPass Tag/Plate control did not finish hydrating.",
+    "EZPASS_INVENTORY_CONTROL_NOT_HYDRATED", "inventory_control_not_hydrated");
+  }
+
   const portalDate = (iso) => {
     const target = isoParts(iso);
     if (!target) throw new Error("E-ZPass received an invalid date for its transaction filter.");
@@ -494,56 +559,27 @@
     });
   }
 
-  async function editDateInput(input, digits) {
-    if (typeof document.execCommand !== "function") return false;
-    input.focus?.();
-    input.select?.();
-    input.setSelectionRange?.(0, String(input.value || "").length);
-    try {
-      document.execCommand("delete", false);
-      for (const digit of digits) {
-        if (!document.execCommand("insertText", false, digit)) return false;
-        await Promise.resolve();
-      }
-      return true;
-    } catch { return false; }
-  }
-
-  function clearDateInput(input, setter) {
-    input.focus?.();
-    input.setSelectionRange?.(0, String(input.value || "").length);
-    dispatchInputEvent(input, "beforeinput", { inputType: "deleteContentBackward", data: null });
-    setter.call(input, "");
-    dispatchInputEvent(input, "input", { inputType: "deleteContentBackward", data: null });
-  }
-
   async function commitDateInput(input, iso) {
     if (inputDate(input.value) === iso && input.checkValidity?.() !== false) return input;
     const identity = dateInputIdentity(input);
-    const digits = normalizedDateDigits(portalDate(iso));
+    const formatted = portalDate(iso);
     if (isDisabled(input) || input.readOnly || input.getAttribute?.("aria-readonly") === "true") {
-      throw new Error(`E-ZPass date input is not editable. Diagnostics: ${dateInputDiagnostics(input, identity)}`);
+      throw adapterError(`E-ZPass date input is not editable. Diagnostics: ${dateInputDiagnostics(input, identity)}`,
+        "EZPASS_DATE_NOT_EDITABLE", "date_not_editable");
     }
     await continueActiveSessionIfNeeded();
-    let candidate = input;
-    let edited = await editDateInput(candidate, digits);
+    let candidate = reacquireDateInput(identity) || input;
+    const setter = nativeInputSetter(candidate);
+    candidate.focus?.();
+    candidate.select?.();
+    candidate.setSelectionRange?.(0, String(candidate.value || "").length);
+    // E-ZPass parses every input event as a complete date. Publishing masked
+    // prefixes ("07", "07/3", ...) makes its date formatter throw and leaves
+    // the rest of the filter panel in a partially hydrated state.
+    dispatchInputEvent(candidate, "beforeinput", { inputType: "insertReplacementText", data: formatted });
+    setter.call(candidate, formatted);
+    dispatchInputEvent(candidate, "input", { inputType: "insertReplacementText", data: formatted });
     candidate = reacquireDateInput(identity) || candidate;
-    if (!edited || normalizedDateDigits(candidate.value) !== digits) {
-      const setter = nativeInputSetter(candidate);
-      clearDateInput(candidate, setter);
-      let typedDigits = "";
-      for (const digit of digits) {
-        dispatchInputEvent(candidate, "keydown", { key: digit, code: `Digit${digit}` });
-        dispatchInputEvent(candidate, "keypress", { key: digit, code: `Digit${digit}` });
-        dispatchInputEvent(candidate, "beforeinput", { inputType: "insertText", data: digit });
-        typedDigits += digit;
-        setter.call(candidate, maskedDatePrefix(typedDigits));
-        dispatchInputEvent(candidate, "input", { inputType: "insertText", data: digit });
-        dispatchInputEvent(candidate, "keyup", { key: digit, code: `Digit${digit}` });
-        await Promise.resolve();
-        candidate = reacquireDateInput(identity) || candidate;
-      }
-    }
     dispatchInputEvent(candidate, "change");
     candidate.blur?.();
     const end = Date.now() + 2500;
@@ -554,7 +590,8 @@
       if (inputDate(candidate.value) === iso && candidate.checkValidity?.() !== false) return candidate;
       await sleep(100);
     }
-    throw new Error(`E-ZPass rejected a typed date. Diagnostics: ${dateInputDiagnostics(candidate, identity)}`);
+    throw adapterError(`E-ZPass rejected a complete date. Diagnostics: ${dateInputDiagnostics(candidate, identity)}`,
+      "EZPASS_DATE_REJECTED", "date_rejected");
   }
 
   const compactText = (value) => String(value || "").replace(/\s+/g, " ").trim();
@@ -651,8 +688,7 @@
     catch { return fallback; }
   }
 
-  function identifierOptions(combo = null) {
-    combo = liveIdentifierCombo(combo);
+  function scopedIdentifierOptions(combo) {
     const listboxId = combo?.getAttribute?.("aria-controls") || combo?.getAttribute?.("aria-owns");
     const listbox = listboxId ? document.getElementById?.(listboxId) : null;
     const root = listbox && isVisible(listbox) ? listbox : document;
@@ -665,6 +701,82 @@
     const prefix = listboxId.slice(0, -"listbox".length) + "option-";
     return controls(listbox, "[id]").filter((node) => isVisible(node) &&
       String(node.id || "").startsWith(prefix) && /^\d+$/.test(String(node.id).slice(prefix.length)));
+  }
+
+  function identifierOptions(combo = null) {
+    return scopedIdentifierOptions(liveIdentifierCombo(combo));
+  }
+
+  function inventoryOptionKind(option) {
+    const groupText = compactText(option?.parentElement?.textContent);
+    if (/^license plate\b/i.test(groupText)) return "plate";
+    if (/^tag\s*#/i.test(groupText)) return "tag";
+    return null;
+  }
+
+  function inventoryCanonical(kind, value) {
+    let text = compactText(value).normalize("NFKC").toUpperCase();
+    if (kind === "plate") text = text.replace(/^[A-Z]{2}\s+/, "");
+    const canonical = text.replace(/[^A-Z0-9]/g, "");
+    return canonical || null;
+  }
+
+  async function identifierInventory() {
+    assertRoute("identifier inventory");
+    const url = new URL(location.href);
+    if (url.search) throw adapterError("E-ZPass identifier inventory requires the unfiltered transactions page.",
+      "EZPASS_INVENTORY_FILTERED", "inventory_page_filtered");
+    await ensureInventoryDrawerOpen();
+    let combo = await waitForInventoryIdentifierCombo();
+    combo.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    await portalAction(combo, "identifier inventory menu");
+    let menu = null, replaced = false;
+    try {
+      menu = await waitFor(() => {
+        const current = inventoryIdentifierCombo();
+        if (!current || isDisabled(current)) return null;
+        replaced ||= current !== combo;
+        combo = current;
+        const options = scopedIdentifierOptions(current);
+        return options.length ? { combo: current, options } : null;
+      }, 10000, "E-ZPass identifier inventory listbox did not finish hydrating.");
+    } catch (error) {
+      if (!/inventory listbox did not finish hydrating/.test(error.message)) throw error;
+      throw adapterError(replaced ? "E-ZPass replaced the Tag/Plate control before its inventory listbox stabilized." : error.message,
+        replaced ? "EZPASS_INVENTORY_CONTROL_STALE" : "EZPASS_INVENTORY_LISTBOX_NOT_HYDRATED",
+        replaced ? "inventory_control_stale" : "inventory_listbox_not_hydrated");
+    }
+    const inventory = [];
+    for (const option of menu.options) {
+      const kind = inventoryOptionKind(option);
+      const identifier = normalizedText(option);
+      const canonicalIdentifier = inventoryCanonical(kind, identifier);
+      if (kind && identifier && canonicalIdentifier) inventory.push({ kind, identifier, canonicalIdentifier });
+    }
+    if (!inventory.length) throw adapterError("E-ZPass returned no classifiable tag or plate options.",
+      "EZPASS_IDENTIFIER_OPTIONS_NOT_LOADED", "identifier_inventory_empty");
+    return inventory;
+  }
+
+  async function waitForIdentifierOptions(combo, timeoutMs = IDENTIFIER_MENU_SETTLE_MS, required = true) {
+    try {
+      return await waitFor(() => {
+        const current = liveIdentifierCombo(combo);
+        if (!current || current.isConnected === false) return null;
+        const options = identifierOptions(current);
+        return options.length ? { combo: current, options } : null;
+      }, timeoutMs, "E-ZPass tag/plate options did not finish loading.");
+    } catch (error) {
+      if (!/options did not finish loading/.test(error.message)) throw error;
+      if (!required) return null;
+      const current = liveIdentifierCombo(combo);
+      if (!current || current.isConnected === false) {
+        throw adapterError("E-ZPass replaced the Tag/Plate control before it could be verified.",
+          "EZPASS_FILTER_CONTROL_STALE", "identifier_control_stale");
+      }
+      throw adapterError("E-ZPass tag/plate options did not finish loading; the identifier could not be verified.",
+        "EZPASS_IDENTIFIER_OPTIONS_NOT_LOADED", "identifier_options_not_loaded");
+    }
   }
 
   function uniqueIdentifierOption(query, combo = null) {
@@ -690,6 +802,7 @@
     const count = identifierOptions(combo).length;
     const error = new Error(`E-ZPass does not list this configured ${query.kind}. ${count} tag/plate options were visible. Update or remove the assignment on the Vehicles page.`);
     error.code = "EZPASS_IDENTIFIER_UNAVAILABLE";
+    error.reason = "identifier_unavailable";
     return error;
   }
 
@@ -726,17 +839,32 @@
 
   async function selectIdentifier(combo, query) {
     await continueActiveSessionIfNeeded();
+    combo = liveIdentifierCombo(combo);
+    if (!combo || combo.isConnected === false) {
+      throw adapterError("E-ZPass replaced the Tag/Plate control before its menu could be opened.",
+        "EZPASS_FILTER_CONTROL_STALE", "identifier_control_stale");
+    }
     combo.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     await portalAction(combo, "exact tag/plate menu");
-    // The live portal mounts its listbox asynchronously. Do not type into the
-    // combobox merely because the requested option was absent after one frame.
-    let option = await waitForIdentifierOption(combo, query, IDENTIFIER_MENU_SETTLE_MS);
+    // The live portal mounts and replaces this listbox asynchronously. Wait for
+    // a hydrated live menu before deciding whether the identifier is absent.
+    const menu = await waitForIdentifierOptions(combo, IDENTIFIER_MENU_SETTLE_MS, false);
+    combo = menu?.combo || liveIdentifierCombo(combo);
+    let option = menu ? uniqueIdentifierOption(query, combo) : null;
     if (!option) {
       const typed = await typeIdentifierFilter(combo, query);
-      option = await waitForIdentifierOption(combo, query, typed ? 5000 : 2500);
+      if (typed) {
+        await waitForIdentifierOptions(combo, 5000);
+        option = await waitForIdentifierOption(combo, query, 5000);
+      } else if (!menu) {
+        await waitForIdentifierOptions(combo, 2500);
+      }
     }
     if (!option) {
-      if (!identifierOptions(combo).length) throw new Error("E-ZPass tag/plate options did not finish loading; the identifier could not be verified.");
+      if (!identifierOptions(combo).length) {
+        throw adapterError("E-ZPass tag/plate options disappeared before the identifier could be verified.",
+          "EZPASS_IDENTIFIER_OPTIONS_NOT_LOADED", "identifier_options_disappeared");
+      }
       throw unavailableIdentifierError(combo, query);
     }
     await portalAction(option, "exact tag/plate selection");
@@ -764,6 +892,30 @@
       view: view ? normalizedText(view) : null };
   }
 
+  function filterStateMatchesQuery(query, requireIdentifier = false) {
+    try {
+      const inputs = visibleDateInputs();
+      const filters = transactionFilterControls(inputs);
+      const datesMatch = inputDate(inputs[0].value) === query.startDate && inputDate(inputs[1].value) === query.endDate;
+      const typeMatches = /^toll$/i.test(compactText(filters.type.value) || normalizedText(filters.type));
+      const identifierMatches = optionIdentifierCandidates(filters.identifier, query.kind)
+        .has(String(query.canonicalIdentifier || ""));
+      return datesMatch && typeMatches && (!requireIdentifier || identifierMatches)
+        ? { inputs, filters } : null;
+    } catch { return null; }
+  }
+
+  async function waitForQueryFilterState(query, requireIdentifier = false, timeoutMs = 5000) {
+    try {
+      return await waitFor(() => filterStateMatchesQuery(query, requireIdentifier), timeoutMs,
+        "E-ZPass trip filters were not confirmed.");
+    } catch (error) {
+      if (!/trip filters were not confirmed/.test(error.message)) throw error;
+      throw adapterError(`E-ZPass did not retain the trip ${requireIdentifier ? "dates, Toll type, and identifier" : "dates and Toll type"}.`,
+        "EZPASS_FILTER_STATE_NOT_CONFIRMED", requireIdentifier ? "identifier_filter_not_confirmed" : "date_filter_not_confirmed");
+    }
+  }
+
   async function restoreViewSize(value) {
     if (!value) return;
     const combos = controls(transactionMain(), '[role="combobox"][aria-label="View"]').filter(isVisible);
@@ -782,9 +934,9 @@
     await commitDateInput(reacquireDateInput(endIdentity) || inputs[1], query.endDate);
     let filters = transactionFilterControls(visibleDateInputs());
     await selectCombo(filters.type, (value) => /^toll$/i.test(value), "Toll type");
-    filters = transactionFilterControls(visibleDateInputs());
+    ({ filters } = await waitForQueryFilterState(query, false));
     await selectIdentifier(filters.identifier, query);
-    filters = transactionFilterControls(visibleDateInputs());
+    ({ filters } = await waitForQueryFilterState(query, true));
     const search = filters.search;
     await waitFor(() => !isDisabled(search) && search, 5000, "E-ZPass Search remained disabled after applying trip filters.");
     const baseline = samplePage(readDom, parseRecord);
@@ -853,6 +1005,60 @@
   function recordMatchesQuery(record, query) {
     const values = query.kind === "tag" ? [record.tagId, record.tagOrPlate] : [record.plate, record.tagOrPlate];
     return values.some((value) => portalCanonical(query.kind, value) === String(query.canonicalIdentifier || ""));
+  }
+
+  function urlDate(value) {
+    const match = String(value || "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!match) return null;
+    const iso = `${match[3]}-${match[1]}-${match[2]}`;
+    return isoParts(iso) ? iso : null;
+  }
+
+  function validateDirectQueryUrl(query, portalIdentifier) {
+    const url = new URL(location.href);
+    const allowed = new Set(["tagOrPlateNumber", "transactionType", "endDate", "startDate"]);
+    const keys = [...url.searchParams.keys()];
+    if (!["https://www.e-zpassny.com", "https://e-zpassny.com"].includes(url.origin) ||
+        url.username || url.password || url.hash || url.pathname.replace(/\/$/, "") !== TRANSACTIONS_PATH || keys.length !== 4 ||
+        keys.some((key) => !allowed.has(key)) || [...allowed].some((key) => url.searchParams.getAll(key).length !== 1) ||
+        url.searchParams.get("transactionType") !== "TOLL" ||
+        url.searchParams.get("tagOrPlateNumber") !== portalIdentifier ||
+        urlDate(url.searchParams.get("startDate")) !== query.startDate ||
+        urlDate(url.searchParams.get("endDate")) !== query.endDate) {
+      throw adapterError("E-ZPass direct-query URL did not match the requested trip filters.",
+        "EZPASS_DIRECT_QUERY_MISMATCH", "direct_query_mismatch");
+    }
+    return true;
+  }
+
+  async function collectCurrentQuery({ query, portalIdentifier, parseRecord, readDom, onEvidencePage }) {
+    query = validateQueries([query])[0];
+    if (typeof portalIdentifier !== "string" || !portalIdentifier.trim() || portalIdentifier.length > 80) {
+      throw adapterError("E-ZPass received an invalid resolved tag/plate option.",
+        "EZPASS_DIRECT_QUERY_MISMATCH", "resolved_identifier_invalid");
+    }
+    validateDirectQueryUrl(query, portalIdentifier);
+    const first = await settledPage(readDom, parseRecord);
+    if (!searchResultFits(first, query)) throw adapterError("E-ZPass direct-query results did not match the requested trip filters.",
+      "EZPASS_SEARCH_INCOMPLETE", "filters_not_confirmed");
+    const result = await collectFilteredPages(first, query, readDom, parseRecord, onEvidencePage);
+    const records = new Map();
+    for (const record of result.records) {
+      const date = recordLocalDate(record);
+      if (!recordMatchesQuery(record, query) || !date || date < query.startDate || date > query.endDate) {
+        throw adapterError("E-ZPass returned a transaction outside the direct tag/date query.",
+          "EZPASS_SEARCH_INCOMPLETE", "filters_not_confirmed");
+      }
+      mergeQueryRecord(records, record, query);
+    }
+    return {
+      records: [...records.values()], complete: true, completeForRange: true,
+      pageCount: result.pageCount, rawCount: result.rawCount, chunkCount: 1,
+      terminalReason: "direct_query_complete",
+      queryReports: [{ queryId: query.queryId, reservationId: query.reservationId, kind: query.kind,
+        pageCount: result.pageCount, rawCount: result.rawCount, recordCount: records.size,
+        complete: true, status: "complete" }]
+    };
   }
 
   function queryNeutralRecord(record) {
@@ -937,7 +1143,8 @@
               if (attempt === 0 && Date.now() < deadline) continue;
               break;
             }
-            throw new Error(`Trip ${query.reservationId} ${query.kind} search failed: ${error.message}`);
+            throw adapterError(`Trip ${query.reservationId} ${query.kind} search failed: ${error.message}`,
+              error?.code || "EZPASS_QUERY_SETUP_FAILED", error?.reason || "query_setup_failed");
           }
         }
         if (!result) {
@@ -987,18 +1194,21 @@
   }
 
   globalThis.EzpassCollection = Object.freeze({
-    validateRange, validateQueries, collect,
+    validateRange, validateQueries, collect, identifierInventory, collectCurrentQuery,
     testing: Object.freeze({ hasActivePortalFilters, hasDescendingTransactionSort, localTimestampKey, pageChronology,
       paginationRoot, activePageNumber, nextControl, previousControl, maximizePageSize, rewindToFirstPage, assertRoute,
       normalizedDateInputText, inputDate, dateInputRole, visibleDateInputs, reacquireDateInput,
       portalDate, normalizedDateDigits, maskedDatePrefix, dateInputDiagnostics, commitDateInput,
       sessionExpiryDialogs, continueActiveSessionIfNeeded,
       accessibleControlName, namedCombos, transactionFilterControls,
-      optionIdentifierCandidates, identifierOptions, uniqueIdentifierOption, waitForIdentifierOption,
-      liveIdentifierCombo,
+      optionIdentifierCandidates, identifierOptions, scopedIdentifierOptions, inventoryIdentifierCombo,
+      ensureInventoryDrawerOpen, waitForInventoryIdentifierCombo, inventoryOptionKind, inventoryCanonical,
+      uniqueIdentifierOption, waitForIdentifierOption,
+      liveIdentifierCombo, waitForIdentifierOptions,
       unavailableIdentifierError, typeIdentifierFilter, selectIdentifier,
-      recordMatchesQuery, mergeQueryRecord, collectFilteredPages, samplePage, searchResultFits, waitForSearchResult,
-      snapshotFilters, applyQuery, restoreFilters }),
+      recordMatchesQuery, recordLocalDate, urlDate, validateDirectQueryUrl, mergeQueryRecord,
+      collectFilteredPages, samplePage, searchResultFits, waitForSearchResult,
+      snapshotFilters, filterStateMatchesQuery, waitForQueryFilterState, applyQuery, restoreFilters }),
     constants: Object.freeze({ MAX_TOTAL_PAGES })
   });
 })();

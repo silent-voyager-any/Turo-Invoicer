@@ -81,13 +81,15 @@
   }
 
   createCapture("ezpass", parseToll, readDom, {
-    collectorRevision: "0.5.9-trip-query-11",
+    collectorRevision: "0.5.12-trip-query-14",
     isPageAllowed: (path) => path === TRANSACTIONS_PATH,
     pageMessage: "Open https://www.e-zpassny.com/ezpass/dashboard/transactions and apply your activity filters before syncing.",
     waitTimeoutMs: 20000,
     settleMs: 300,
     observeThrottleMs: 100,
     collect: globalThis.EzpassCollection?.collect,
+    identifierInventory: globalThis.EzpassCollection?.identifierInventory,
+    collectQuery: globalThis.EzpassCollection?.collectCurrentQuery,
     emptyMessage: "Timed out after 20 seconds waiting for complete E-ZPass toll postings. Credits and other non-toll activity are ignored; a toll must include an exit/transaction date, time, plaza, and amount. Apply a date range, then reload the page and retry."
   });
 })();

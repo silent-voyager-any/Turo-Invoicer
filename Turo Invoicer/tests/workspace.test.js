@@ -22,6 +22,8 @@ test("builds one trip-centric draft with preselected confirmed tolls", () => {
   assert.deepEqual(result.drafts[0].selectedTollIds, ["toll-1"]);
   assert.equal(result.drafts[0].totalCents, 694);
   assert.equal(result.drafts[0].selectable, true);
+  assert.equal(result.drafts[0].selected, true);
+  assert.equal(result.summary.tripCount, 1);
 });
 
 test("time-only matches never enter a trip draft", () => {
@@ -42,6 +44,15 @@ test("an unavailable portal identifier blocks only its affected trip", () => {
   ] } } });
   assert.ok(result.drafts[0].blockingReasons.includes("identifier_unavailable"));
   assert.equal(result.drafts[0].selectable, false);
+});
+
+test("a removed assignment no longer lets its stale unavailable report block a newly matched toll", () => {
+  const result = workspace({ collectionRuns: { ...complete, ezpass: { complete: true, queryReports: [
+    { queryId: "trip-1:tag:OLD", reservationId: "trip-1", kind: "tag", status: "identifier_unavailable", complete: false }
+  ] } }, activeQueryIds: new Set(["trip-1:tag:NEW"]) });
+  assert.equal(result.drafts[0].selectable, true);
+  assert.equal(result.drafts[0].selected, true);
+  assert.deepEqual(result.drafts[0].activeQueryIds, ["trip-1:tag:NEW"]);
 });
 
 test("a partial run leaves completed trips selectable but blocks the stalled trip", () => {
@@ -93,6 +104,16 @@ test("select all includes only ready trips", () => {
   const selected = selectAllReady([ready, blocked]);
   assert.equal(selected[0].selected, true);
   assert.equal(selected[1].selected, false);
+});
+
+test("automatic batch inclusion respects an explicit user removal", () => {
+  let drafts = workspace().drafts;
+  assert.equal(drafts[0].selected, true);
+  drafts = setTripSelection(drafts, "trip-1", false);
+  assert.equal(drafts[0].selected, false);
+  assert.equal(drafts[0].batchSelectionTouched, true);
+  const rebuilt = workspace({ previousDrafts: drafts }).drafts;
+  assert.equal(rebuilt[0].selected, false);
 });
 
 test("evidence coverage enables individual approval and revisions invalidate it", () => {

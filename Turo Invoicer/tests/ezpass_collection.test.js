@@ -22,6 +22,120 @@ const api = context.EzpassCollection;
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 const searchQuery = { kind: "tag", canonicalIdentifier: "00123", startDate: "2026-08-01", endDate: "2026-08-02" };
+
+test("validates exact four-parameter direct-query URLs and four-digit portal dates", () => {
+  const original = context.location.href;
+  const query = { queryId: "55815917:tag:00813641718", reservationId: "55815917", vehicleId: "car1",
+    kind: "tag", identifier: "00813641718", canonicalIdentifier: "00813641718",
+    startDate: "2026-07-31", endDate: "2026-08-02" };
+  try {
+    context.location.href = "https://www.e-zpassny.com/ezpass/dashboard/transactions?tagOrPlateNumber=00813641718&transactionType=TOLL&endDate=08%2F02%2F2026&startDate=07%2F31%2F2026";
+    assert.equal(api.testing.validateDirectQueryUrl(query, "00813641718"), true);
+    for (const suffix of ["&extra=1", "&startDate=07%2F31%2F2026", "#fragment"]) {
+      context.location.href = "https://www.e-zpassny.com/ezpass/dashboard/transactions?tagOrPlateNumber=00813641718&transactionType=TOLL&endDate=08%2F02%2F2026&startDate=07%2F31%2F2026" + suffix;
+      assert.throws(() => api.testing.validateDirectQueryUrl(query, "00813641718"), /did not match/);
+    }
+    context.location.href = "https://example.com/ezpass/dashboard/transactions?tagOrPlateNumber=00813641718&transactionType=TOLL&endDate=08%2F02%2F2026&startDate=07%2F31%2F2026";
+    assert.throws(() => api.testing.validateDirectQueryUrl(query, "00813641718"), /did not match/);
+  } finally { context.location.href = original; }
+});
+
+test("inventory grouping preserves leading-zero tags and canonicalizes formatted plates", () => {
+  assert.equal(api.testing.inventoryOptionKind({ parentElement: { textContent: "Tag # 00813641718" } }), "tag");
+  assert.equal(api.testing.inventoryOptionKind({ parentElement: { textContent: "License Plate NY LXB4501" } }), "plate");
+  assert.equal(api.testing.inventoryCanonical("tag", "00813641718"), "00813641718");
+  assert.equal(api.testing.inventoryCanonical("plate", "NY LXB-4501"), "LXB4501");
+});
+
+function progressiveInventoryFixture() {
+  let labels = [], filterClicks = 0;
+  const root = { querySelectorAll(selector) {
+    if (selector === "label") return labels;
+    if (selector === "button, [role='button'], input[type='submit'], input[type='button']") return [filter];
+    return [];
+  } };
+  const filter = visibleElement({ textContent: "Filter", click() { filterClicks += 1; } });
+  const makeCombo = ({ disabled = false, connected = true } = {}) => {
+    const label = visibleElement({ textContent: "Tag/Plate #", htmlFor: `identifier-${filterClicks}` });
+    const combo = new TestInputElement();
+    Object.assign(combo, visibleElement({ id: label.htmlFor, labels: [label], disabled, readOnly: false,
+      isConnected: connected, attributes: { role: "combobox" } }));
+    label.control = combo;
+    return { label, combo };
+  };
+  context.document = { body: { textContent: "" },
+    querySelector: (selector) => selector === "main, [role='main']" ? root : null,
+    querySelectorAll: (selector) => selector === "label" ? labels : root.querySelectorAll(selector),
+    getElementById: (id) => labels.map((label) => label.control).find((control) => control?.id === id) || null };
+  return { root, makeCombo, setLabels(next) { labels = next; }, get filterClicks() { return filterClicks; } };
+}
+
+test("inventory waits for its exact labelled control without requiring dates, Type, or Search", async () => {
+  context.location.href = "https://www.e-zpassny.com/ezpass/dashboard/transactions";
+  const fixture = progressiveInventoryFixture();
+  const disabled = fixture.makeCombo({ disabled: true });
+  const replacement = fixture.makeCombo();
+  fixture.setLabels([disabled.label]);
+  setTimeout(() => { disabled.combo.isConnected = false; fixture.setLabels([replacement.label]); }, 150);
+  const combo = await api.testing.waitForInventoryIdentifierCombo(1200);
+  assert.equal(combo, replacement.combo);
+  assert.equal(fixture.root.querySelectorAll('[role="combobox"]').length, 0,
+    "the inventory locator must not depend on the legacy all-control query");
+});
+
+test("inventory drawer readiness waits for the Tag/Plate label rather than date inputs", async () => {
+  context.location.href = "https://www.e-zpassny.com/ezpass/dashboard/transactions";
+  const fixture = progressiveInventoryFixture();
+  const hydrated = fixture.makeCombo();
+  setTimeout(() => fixture.setLabels([hydrated.label]), 150);
+  await api.testing.ensureInventoryDrawerOpen();
+  assert.equal(fixture.filterClicks, 1);
+  assert.equal(api.testing.inventoryIdentifierCombo(), hydrated.combo);
+});
+
+test("inventory rejects duplicate exact labels with a dedicated reason", () => {
+  const fixture = progressiveInventoryFixture();
+  const first = fixture.makeCombo(), second = fixture.makeCombo();
+  fixture.setLabels([first.label, second.label]);
+  assert.throws(() => api.testing.inventoryIdentifierCombo(), (error) => {
+    assert.equal(error.code, "EZPASS_INVENTORY_AMBIGUOUS");
+    assert.equal(error.reason, "inventory_ambiguous");
+    return true;
+  });
+});
+
+test("current-query collection accepts stable direct rows and rejects inconsistent results", async () => {
+  const original = context.location.href;
+  const query = { queryId: "55815917:tag:00123", reservationId: "55815917", vehicleId: "car1",
+    kind: "tag", identifier: "00123", canonicalIdentifier: "00123",
+    startDate: "2026-08-01", endDate: "2026-08-02" };
+  context.location.href = "https://www.e-zpassny.com/ezpass/dashboard/transactions?tagOrPlateNumber=00123&transactionType=TOLL&endDate=08%2F02%2F2026&startDate=08%2F01%2F2026";
+  const fixture = searchFixture([searchRow("direct")]);
+  try {
+    const result = await api.collectCurrentQuery({ query, portalIdentifier: "00123",
+      readDom: fixture.readDom, parseRecord: fixture.parseRecord });
+    assert.equal(result.records[0].queryId, query.queryId);
+    assert.equal(result.records[0].queryIdentifier, "00123");
+    fixture.set([{ ...searchRow("wrong"), tagId: "00999" }]);
+    await assert.rejects(api.collectCurrentQuery({ query, portalIdentifier: "00123",
+      readDom: fixture.readDom, parseRecord: fixture.parseRecord }), /did not match/);
+  } finally { fixture.restore(); context.location.href = original; }
+});
+
+test("current-query collection proves a stable empty direct result", async () => {
+  const original = context.location.href;
+  const query = { queryId: "55815917:tag:00123", reservationId: "55815917", vehicleId: "car1",
+    kind: "tag", identifier: "00123", canonicalIdentifier: "00123",
+    startDate: "2026-08-01", endDate: "2026-08-02" };
+  context.location.href = "https://www.e-zpassny.com/ezpass/dashboard/transactions?tagOrPlateNumber=00123&transactionType=TOLL&endDate=08%2F02%2F2026&startDate=08%2F01%2F2026";
+  const fixture = searchFixture([], "No transactions found");
+  try {
+    const result = await api.collectCurrentQuery({ query, portalIdentifier: "00123",
+      readDom: fixture.readDom, parseRecord: fixture.parseRecord });
+    assert.deepEqual(clone(result.records), []);
+    assert.equal(result.queryReports[0].status, "complete");
+  } finally { fixture.restore(); context.location.href = original; }
+});
 function searchFixture(initialRows, initialText = "") {
   let rows = initialRows, text = initialText, revision = 0, loading = false;
   const main = { get innerText() { return text; }, querySelectorAll(selector) {
@@ -366,14 +480,19 @@ test("merges duplicate lane transactions across separate tag and plate searches"
 function typedDateFixture({ execCommand = true, replaceInput = false, readOnly = false, disabled = false,
   rejectValue = false, invalid = false } = {}) {
   let active = null, calendarClicks = 0;
+  const publishedValues = [];
   const makeInput = (role) => {
     const input = new TestInputElement();
     Object.assign(input, visibleElement({ labels: [{ textContent: `${role} Date` }], events: [], readOnly, disabled,
       attributes: { placeholder: "MM/DD/YY" },
       focus() { active = this; }, select() {}, setSelectionRange() {}, blur() {}, checkValidity: () => !invalid,
-      dispatchEvent(event) {
-        this.events.push(event);
-        if (replaceInput && role === "Start" && event.type === "input" && !inputs.replaced) {
+       dispatchEvent(event) {
+         this.events.push(event);
+         if (event.type === "input") {
+           publishedValues.push(this.value);
+           if (rejectValue) this.value = "";
+         }
+         if (replaceInput && role === "Start" && event.type === "input" && !inputs.replaced) {
           const replacement = makeInput(role);
           replacement.value = this.value;
           inputs[0] = replacement;
@@ -403,38 +522,40 @@ function typedDateFixture({ execCommand = true, replaceInput = false, readOnly =
       return true;
     };
   }
-  return { inputs, get calendarClicks() { return calendarClicks; } };
+  return { inputs, publishedValues, get calendarClicks() { return calendarClicks; } };
 }
 
-test("types an exact masked date through Chromium editing without opening the calendar", async () => {
+test("commits an exact masked date atomically without opening the calendar", async () => {
   context.location.href = "https://www.e-zpassny.com/ezpass/dashboard/transactions";
   const fixture = typedDateFixture();
   fixture.inputs[0].value = "01/01/25";
   await api.testing.commitDateInput(fixture.inputs[0], "2026-08-01");
   assert.equal(fixture.inputs[0].value, "08/01/26");
+  assert.deepEqual(fixture.publishedValues, ["08/01/26"]);
   assert.equal(fixture.calendarClicks, 0);
 });
 
-test("native input fallback emits typing events and reacquires a replaced input", async () => {
+test("atomic date input reacquires a React-replaced input", async () => {
   const fixture = typedDateFixture({ execCommand: false, replaceInput: true });
   const original = fixture.inputs[0];
   const accepted = await api.testing.commitDateInput(original, "2026-08-01");
   assert.notEqual(accepted, original);
   assert.equal(accepted.value, "08/01/26");
   assert.ok(original.events.some((event) => event.type === "beforeinput"));
-  assert.ok(accepted.events.some((event) => event.type === "keyup"));
+  assert.ok(accepted.events.some((event) => event.type === "change"));
+  assert.deepEqual(fixture.publishedValues, ["08/01/26"]);
   assert.equal(fixture.calendarClicks, 0);
 });
 
-test("typing both masked dates supplies the events that enable portal Search", async () => {
+test("committing both complete dates supplies the events that enable portal Search", async () => {
   const fixture = typedDateFixture({ execCommand: false });
   let searchEnabled = false;
   for (const input of fixture.inputs) {
     const dispatch = input.dispatchEvent.bind(input);
     input.dispatchEvent = (event) => {
       const result = dispatch(event);
-      if (event.type === "keyup" && fixture.inputs.every((field) =>
-        api.testing.normalizedDateDigits(field.value).length === 6)) searchEnabled = true;
+      if (event.type === "input" && fixture.inputs.every((field) =>
+         api.testing.normalizedDateDigits(field.value).length === 6)) searchEnabled = true;
       return result;
     };
   }
@@ -444,7 +565,7 @@ test("typing both masked dates supplies the events that enable portal Search", a
   assert.equal(searchEnabled, true);
 });
 
-test("typed dates accept safe formatting marks but reject uneditable or rejected fields", async () => {
+test("complete dates accept safe formatting marks but reject uneditable or rejected fields", async () => {
   let fixture = typedDateFixture();
   fixture.inputs[0].value = "8\u200e/1\u200e/26";
   assert.equal(await api.testing.commitDateInput(fixture.inputs[0], "2026-08-01"), fixture.inputs[0]);
@@ -453,7 +574,23 @@ test("typed dates accept safe formatting marks but reject uneditable or rejected
   fixture = typedDateFixture({ disabled: true });
   await assert.rejects(api.testing.commitDateInput(fixture.inputs[0], "2026-08-01"), /not editable.*disabled/);
   fixture = typedDateFixture({ rejectValue: true, invalid: true });
-  await assert.rejects(api.testing.commitDateInput(fixture.inputs[0], "2026-08-01"), /rejected a typed date.*digitCount/);
+  await assert.rejects(api.testing.commitDateInput(fixture.inputs[0], "2026-08-01"), (error) => {
+    assert.equal(error.code, "EZPASS_DATE_REJECTED");
+    assert.match(error.message, /rejected a complete date.*digitCount/);
+    return true;
+  });
+});
+
+test("confirms exact per-trip dates, Toll type, and identifier before Search", () => {
+  const fixture = labelledFilterFixture();
+  fixture.type.value = "Toll";
+  fixture.identifier.value = "E-ZPass Tag: 00123";
+  assert.ok(api.testing.filterStateMatchesQuery(searchQuery, true));
+  fixture.end.value = "08/03/26";
+  assert.equal(api.testing.filterStateMatchesQuery(searchQuery, true), null);
+  fixture.end.value = "08/02/26";
+  fixture.identifier.value = "00124";
+  assert.equal(api.testing.filterStateMatchesQuery(searchQuery, true), null);
 });
 
 test("continues only the exact E-ZPass session-expiry dialog action", async () => {

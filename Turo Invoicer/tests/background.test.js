@@ -11,10 +11,13 @@ const sentMessages = [];
 let turoUrl = "https://turo.com/us/en/trips/history";
 let ezpassUrl = "https://www.e-zpassny.com/ezpass/dashboard/transactions";
 let managedUrl = null;
+let managedEzpassUrl = null;
+const navigatedEzpassUrls = [];
+let inventoryFailuresRemaining = 0;
 const existingTollInvoices = new Set();
 const portalResponses = {
   1: { ok: true, source: "turo", complete: true, pagePath: "/us/en/trips/history", records: [{ id: "1001", vehicleId: "car1", start: "2026-07-01 09:00", end: "2026-07-01 18:00", vehicleLabel: "Example car", vehiclePlate: "NY:ABC-123", guestName: "Synthetic private field" }] },
-  2: { ok: true, source: "ezpass", complete: true, completeForRange: true, collectorRevision: "0.5.9-trip-query-11", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, tagOrPlate: "ABC123", queryId: "1001:plate:ABC123", queryReservationId: "1001", queryVehicleId: "car1", queryKind: "plate", queryIdentifier: "NY:ABC-123", accountNumber: "Synthetic private field" }] }
+  2: { ok: true, source: "ezpass", complete: true, completeForRange: true, collectorRevision: "0.5.12-trip-query-14", pagePath: "/ezpass/dashboard/transactions", records: [{ id: "toll1", timestamp: "2026-07-01 12:00", plaza: "Lincoln", amount: 10, tagOrPlate: "ABC123", queryId: "1001:plate:ABC123", queryReservationId: "1001", queryVehicleId: "car1", queryKind: "plate", queryIdentifier: "NY:ABC-123", accountNumber: "Synthetic private field" }] }
 };
 globalThis.chrome = {
   runtime: { id: "test-id", getURL: (file) => "chrome-extension://test-id/" + file,
@@ -37,13 +40,54 @@ globalThis.chrome = {
         if (managedUrl.includes("/reimbursement/invoice?")) return { ok: true, phase: "invoice", hasTolls: true };
         if (managedUrl.endsWith("/select-incidental")) return { ok: true, phase: "select", tollOptionAvailable: true };
       }
+      if (id === 91 && message.type === "EZPASS_IDENTIFIER_INVENTORY") {
+        if (inventoryFailuresRemaining > 0) {
+          inventoryFailuresRemaining -= 1;
+          return { ok: false, source: "ezpass", collectorRevision: portalResponses[2].collectorRevision,
+            error: "Synthetic inventory hydration failure.", reason: "inventory_control_not_hydrated" };
+        }
+        const unavailable = new Set((portalResponses[2].queryReports || [])
+          .filter((report) => report.status === "identifier_unavailable").map((report) => report.queryId));
+        const queries = message.queryJobs?.length ? message.queryJobs : [
+          { kind: "tag", identifier: "001", canonicalIdentifier: "001" },
+          { kind: "plate", identifier: "NY:ABC-123", canonicalIdentifier: "ABC123" }
+        ];
+        return { ok: true, source: "ezpass", collectorRevision: portalResponses[2].collectorRevision,
+          inventory: queries.filter((query) => !unavailable.has(query.queryId)).map((query) => ({
+            kind: query.kind, identifier: query.identifier, canonicalIdentifier: query.canonicalIdentifier
+          })) };
+      }
+      if (id === 91 && message.type === "COLLECT_EZPASS_QUERY") {
+        const configured = portalResponses[2];
+        if (configured.ok === false) return structuredClone(configured);
+        const configuredReport = (configured.queryReports || []).find((report) => report.queryId === message.query.queryId);
+        if (configured.complete === false && configuredReport?.status !== "complete") {
+          return { ok: false, source: "ezpass", collectorRevision: configured.collectorRevision,
+            error: "Synthetic direct query failure.", reason: configuredReport?.reason || "direct_query_failed" };
+        }
+        const records = (configured.records || []).filter((record) => record.queryId === message.query.queryId);
+        const report = configuredReport || { queryId: message.query.queryId, reservationId: message.query.reservationId,
+          kind: message.query.kind, pageCount: 1, rawCount: records.length, recordCount: records.length,
+          complete: true, status: "complete" };
+        return { ok: true, source: "ezpass", collectorRevision: configured.collectorRevision,
+          pagePath: "/ezpass/dashboard/transactions", complete: true, completeForRange: true,
+          pageCount: report.pageCount || 1, rawCount: report.rawCount ?? records.length,
+          records: structuredClone(records), queryReports: [structuredClone(report)] };
+      }
       if (id === 1 && delayTuro) await new Promise((resolve) => setTimeout(resolve, 5100));
       return structuredClone(portalResponses[id]);
     },
-    create: async ({ url }) => ({ id: 90, url, status: "loading" }),
-    update: async (id, { url }) => { managedUrl = url; return { id, url, status: "complete" }; },
-    get: async (id) => ({ id, url: managedUrl, status: "complete" }),
-    remove: async () => { managedUrl = null; }
+    create: async ({ url }) => {
+      if (url.includes("e-zpassny.com")) { managedEzpassUrl = url; return { id: 91, url, status: "loading" }; }
+      managedUrl = url; return { id: 90, url, status: "loading" };
+    },
+    update: async (id, changes) => {
+      const url = changes.url || (id === 91 ? managedEzpassUrl : managedUrl);
+      if (changes.url && id === 91) { managedEzpassUrl = url; navigatedEzpassUrls.push(url); } else if (changes.url) managedUrl = url;
+      return { id, url, active: changes.active === true, status: "complete" };
+    },
+    get: async (id) => ({ id, url: id === 91 ? managedEzpassUrl : managedUrl, status: "complete" }),
+    remove: async (id) => { if (id === 91) managedEzpassUrl = null; else managedUrl = null; }
   }
 };
 await import("../background.js");
@@ -71,6 +115,7 @@ test("worker trusts exact extension UI pages and rejects all other senders", asy
 });
 test("worker collects both sources atomically and strips extra fields", async () => {
   sentMessages.length = 0;
+  navigatedEzpassUrls.length = 0;
   await call({ type: "UPSERT_ASSIGNMENT", assignment: { vehicleId: "car1", kind: "plate", identifier: "NY:ABC-123" } });
   const result = await call({ type: "RUN_SYNC" });
   assert.equal(result.ok, true);
@@ -80,12 +125,37 @@ test("worker collects both sources atomically and strips extra fields", async ()
   assert.equal(result.state.sources.turo.records[0].guestName, undefined);
   assert.equal(result.state.sources.ezpass.records[0].accountNumber, undefined);
   assert.equal(result.state.reconciliation.matched.length, 1);
-  assert.deepEqual(sentMessages.filter(({ message }) => message.type === "COLLECT_NOW").map(({ id }) => id), [1, 2]);
-  assert.deepEqual(sentMessages.find(({ id, message }) => id === 2 && message.type === "COLLECT_NOW").message.range,
-    { startDate: "2026-07-01", endDate: "2026-07-01" });
-  assert.deepEqual(sentMessages.find(({ id, message }) => id === 2 && message.type === "COLLECT_NOW").message.queryJobs
+  assert.deepEqual(sentMessages.filter(({ message }) => message.type === "COLLECT_NOW").map(({ id }) => id), [1]);
+  const inventory = sentMessages.find(({ id, message }) => id === 91 && message.type === "EZPASS_IDENTIFIER_INVENTORY");
+  assert.ok(inventory);
+  assert.deepEqual(inventory.message.queryJobs
     .map(({ reservationId, kind, canonicalIdentifier }) => [reservationId, kind, canonicalIdentifier]), [["1001", "plate", "ABC123"]]);
+  const direct = sentMessages.find(({ id, message }) => id === 91 && message.type === "COLLECT_EZPASS_QUERY");
+  assert.equal(direct.message.portalIdentifier, "NY:ABC-123");
+  assert.ok(navigatedEzpassUrls.includes("https://www.e-zpassny.com/ezpass/dashboard/transactions?tagOrPlateNumber=NY%3AABC-123&transactionType=TOLL&endDate=07%2F01%2F2026&startDate=07%2F01%2F2026"));
+  assert.equal(managedEzpassUrl, null, "temporary E-ZPass tab must be closed");
   assert.deepEqual(result.state.collectionRuns.ezpass.requestedRange, { startDate: "2026-07-01", endDate: "2026-07-01" });
+});
+test("worker retries inventory once before any direct query and always closes its temporary tab", async () => {
+  sentMessages.length = 0;
+  inventoryFailuresRemaining = 1;
+  const result = await call({ type: "RUN_SYNC" });
+  assert.equal(result.synced, true, JSON.stringify(result.collection));
+  const inventoryIndexes = sentMessages.map(({ message }, index) => message.type === "EZPASS_IDENTIFIER_INVENTORY" ? index : -1)
+    .filter((index) => index >= 0);
+  const queryIndex = sentMessages.findIndex(({ message }) => message.type === "COLLECT_EZPASS_QUERY");
+  assert.equal(inventoryIndexes.length, 2);
+  assert.ok(queryIndex > inventoryIndexes[1]);
+  assert.equal(managedEzpassUrl, null);
+
+  sentMessages.length = 0;
+  inventoryFailuresRemaining = 2;
+  const failed = await call({ type: "RUN_SYNC" });
+  assert.equal(failed.synced, false);
+  assert.equal(sentMessages.filter(({ message }) => message.type === "EZPASS_IDENTIFIER_INVENTORY").length, 2);
+  assert.equal(sentMessages.some(({ message }) => message.type === "COLLECT_EZPASS_QUERY"), false);
+  assert.equal(managedEzpassUrl, null);
+  inventoryFailuresRemaining = 0;
 });
 test("verified uncharged trips define the E-ZPass coverage boundary", async () => {
   const prior = portalResponses[1];
@@ -97,8 +167,9 @@ test("verified uncharged trips define the E-ZPass coverage boundary", async () =
   try {
     const result = await call({ type: "RUN_SYNC" });
     assert.equal(result.synced, true, JSON.stringify(result.collection));
-    assert.deepEqual(sentMessages.find(({ id, message }) => id === 2 && message.type === "COLLECT_NOW").message.range,
-      { startDate: "2026-07-15", endDate: "2026-07-16" });
+    const inventory = sentMessages.find(({ id, message }) => id === 91 && message.type === "EZPASS_IDENTIFIER_INVENTORY");
+    assert.deepEqual(inventory.message.queryJobs.map(({ startDate, endDate }) => ({ startDate, endDate })),
+      [{ startDate: "2026-07-15", endDate: "2026-07-16" }]);
     assert.equal(result.state.tripEligibility["1000"].reason, "standard_window_expired");
     assert.doesNotMatch(result.collection.turo.warning || "", /status is unverified/);
   } finally { portalResponses[1] = prior; }
@@ -126,6 +197,8 @@ test("failed or multiple-tab collection preserves the prior snapshot", async () 
 });
 test("an unavailable configured tag is reported without discarding other collected trip results", async () => {
   const prior = portalResponses[2];
+  const added = await call({ type: "UPSERT_ASSIGNMENT", assignment: { vehicleId: "car1", kind: "tag", identifier: "999" } });
+  const addedId = added.state.fleet.assignments.find((assignment) => assignment.kind === "tag" && assignment.identifier === "999").id;
   portalResponses[2] = { ...prior, completeForRange: false, warning: "One configured E-ZPass identifier is unavailable.",
     queryReports: [
       { queryId: "1001:tag:999", reservationId: "1001", kind: "tag", status: "identifier_unavailable", complete: false },
@@ -136,10 +209,13 @@ test("an unavailable configured tag is reported without discarding other collect
     assert.equal(result.synced, true);
     assert.equal(result.state.sources.ezpass.records.length, 1);
     assert.equal(result.state.collectionRuns.ezpass.completeForRange, false);
-    assert.equal(result.state.collectionRuns.ezpass.queryReports[0].status, "identifier_unavailable");
+    assert.ok(result.state.collectionRuns.ezpass.queryReports.some((report) => report.status === "identifier_unavailable"));
     assert.ok(result.state.invoiceDrafts.find((draft) => draft.reservationId === "1001")
       .blockingReasons.includes("identifier_unavailable"));
-  } finally { portalResponses[2] = prior; }
+  } finally {
+    portalResponses[2] = prior;
+    await call({ type: "DELETE_ASSIGNMENT", id: addedId });
+  }
 });
 test("partial trip searches retain the prior complete snapshot and reject unverified records", async () => {
   const completeBefore = (await call({ type: "RUN_SYNC" })).state;
@@ -156,9 +232,12 @@ test("partial trip searches retain the prior complete snapshot and reject unveri
     assert.equal(result.synced, true, JSON.stringify(result.collection));
     assert.equal(result.state.collectionRuns.ezpass.complete, false);
     assert.equal(result.state.lastCompleteSnapshot.sources.ezpass.records.length, completeBefore.sources.ezpass.records.length);
-    assert.equal(result.state.invoiceDrafts.find((draft) => draft.reservationId === "1001").selectable, true);
+    assert.equal(result.state.invoiceDrafts.find((draft) => draft.reservationId === "1001").selectable, true,
+      JSON.stringify({ draft: result.state.invoiceDrafts.find((draft) => draft.reservationId === "1001"), reports: result.state.collectionRuns.ezpass.queryReports }));
     assert.ok(result.state.invoiceDrafts.find((draft) => draft.reservationId === "1002").blockingReasons.includes("search_incomplete"));
-    portalResponses[2].records = [{ ...priorEzpass.records[0], id: "bad", queryId: "1002:plate:ABC123" }];
+    portalResponses[2] = { ...portalResponses[2], complete: true, completeForRange: true,
+      queryReports: portalResponses[2].queryReports.map((report) => ({ ...report, status: "complete", complete: true })),
+      records: [{ ...priorEzpass.records[0], id: "bad", queryId: "1002:plate:ABC123" }] };
     const rejected = await call({ type: "RUN_SYNC" });
     assert.equal(rejected.synced, false);
     assert.equal(rejected.state.sources.ezpass.records[0].id, "toll1");
@@ -222,7 +301,7 @@ test("worker invalidates version-1 snapshots but migrates manual mappings", asyn
   stored.turoTollReconcilerState = { version: 1, sources: { turo: { records: [{ id: "old" }] } },
     settings: { vehicleByTag: { "001": "car1" }, vehicleByPlate: {}, graceMinutes: 15 } };
   const { state } = await call({ type: "GET_STATE" });
-  assert.equal(state.version, 5);
+  assert.equal(state.version, 6);
   assert.equal(state.sources.turo.records.length, 0);
   assert.deepEqual(state.fleet.assignments.map(({ kind, identifier, vehicleId, validFrom, validTo }) =>
     ({ kind, identifier, vehicleId, validFrom, validTo })), [
@@ -259,6 +338,33 @@ test("schema-4 assignments hydrate canonical values without clearing fleet data"
   assert.equal(state.fleet.vehicles[0].sourcePlateConfirmed, true);
   assert.equal(stored.turoTollReconcilerState.fleet.assignments[0].canonicalIdentifier, "ABC123");
 });
+test("schema-5 state migrates without losing the synchronized snapshot", async () => {
+  stored.turoTollReconcilerState = {
+    version: 5,
+    sources: { turo: { records: portalResponses[1].records, updatedAt: "prior" },
+      ezpass: { records: portalResponses[2].records, updatedAt: "prior" } },
+    settings: { timeZone: "America/New_York", graceMinutes: 0 },
+    fleet: { vehicles: [{ vehicleId: "car1", label: "Car one" }], assignments: [] },
+    uiDrafts: { vehicleAssignment: {} }, collectionRuns: {}, tripEligibility: {}, invoiceDrafts: [],
+    selectionSummary: { tripCount: 0, tollCount: 0, totalCents: 0 }, evidence: [], submissionLedger: [], lastSync: "prior"
+  };
+  const { state } = await call({ type: "GET_STATE" });
+  assert.equal(state.version, 6);
+  assert.equal(state.sources.turo.records.length, 1);
+  assert.equal(state.sources.ezpass.records.length, 1);
+  assert.equal(state.lastSync, "prior");
+  assert.deepEqual(state.fleet.identifierInventory, { items: [], updatedAt: null });
+});
+test("identifier refresh persists sanitized inventory without changing synchronized records", async () => {
+  const before = await call({ type: "GET_STATE" });
+  const sources = structuredClone(before.state.sources);
+  const result = await call({ type: "REFRESH_EZPASS_IDENTIFIERS" }, dashboardSender);
+  assert.deepEqual(result.state.sources, sources);
+  assert.deepEqual(result.inventory.items.map(({ kind, canonicalIdentifier }) => [kind, canonicalIdentifier]),
+    [["plate", "ABC123"], ["tag", "001"]]);
+  assert.ok(result.inventory.updatedAt);
+  assert.equal(managedEzpassUrl, null, "temporary inventory tab closes");
+});
 test("schema-3 state migrates without treating its loaded page as complete", async () => {
   stored.turoTollReconcilerState = {
     version: 3,
@@ -268,7 +374,7 @@ test("schema-3 state migrates without treating its loaded page as complete", asy
     uiDrafts: { vehicleAssignment: {} }, evidence: [], submissionLedger: [], lastSync: "prior"
   };
   const { state } = await call({ type: "GET_STATE" });
-  assert.equal(state.version, 5);
+  assert.equal(state.version, 6);
   assert.equal(state.sources.turo.records.length, 1);
   assert.equal(state.collectionRuns.turo.complete, false);
   assert.equal(state.invoiceDrafts[0].eligibility, "status_unknown");
@@ -282,7 +388,8 @@ test("trip and toll selections persist only for complete eligible drafts", async
     let result = await call({ type: "RUN_SYNC" }, dashboardSender);
     assert.equal(result.state.invoiceDrafts[0].selectable, false, "vehicle identity must be confirmed");
     result = await call({ type: "UPSERT_ASSIGNMENT", assignment: { vehicleId: "car1", kind: "tag", identifier: "001" } }, dashboardSender);
-    portalResponses[2].records[0].tagId = "001";
+    Object.assign(portalResponses[2].records[0], { tagId: "001", tagOrPlate: "001",
+      queryId: "1001:tag:001", queryKind: "tag", queryIdentifier: "001" });
     result = await call({ type: "RUN_SYNC" }, dashboardSender);
     assert.equal(result.state.invoiceDrafts[0].selectable, true);
     result = await call({ type: "SET_TRIP_SELECTION", reservationId: "1001", selected: true }, dashboardSender);

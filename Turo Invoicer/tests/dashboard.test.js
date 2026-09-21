@@ -5,9 +5,13 @@ import { readFileSync } from "node:fs";
 
 function node() {
   return {
-    value: "", textContent: "", className: "", disabled: false, label: "", dataset: {}, children: [], listeners: {}, classList: { toggle() {} },
+    value: "", textContent: "", className: "", disabled: false, hidden: false, label: "", dataset: {}, children: [], listeners: {}, classList: { toggle() {} },
     addEventListener(type, callback) { this.listeners[type] = callback; },
-    replaceChildren(...children) { this.children = children; }, append(...children) { this.children.push(...children); }
+    replaceChildren(...children) { this.children = []; this.append(...children); },
+    append(...children) { for (const child of children) { child.parentElement = this; this.children.push(child); } },
+    querySelector(selector) { return descendants(this).find((item) => selector === ".review-mapping-editor" && item.className === "review-mapping-editor") || null; },
+    remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter((item) => item !== this); },
+    focus() {}, scrollIntoView() {}
   };
 }
 
@@ -15,8 +19,12 @@ async function dashboard() {
   const elements = new Map();
   const document = { querySelector(selector) { if (!elements.has(selector)) elements.set(selector, node()); return elements.get(selector); }, createElement: node };
   let state = {
-    version: 4, sources: { turo: { records: [{ id: "trip", vehicleId: "car1" }] }, ezpass: { records: [{ id: "toll" }] } },
-    settings: { timeZone: "America/New_York", graceMinutes: 0 }, fleet: { vehicles: [{ vehicleId: "car1", label: "Car one", sourcePlate: "NY:ABC-123", sourcePlateConfirmed: false }], assignments: [] },
+    version: 6, sources: { turo: { records: [{ id: "trip", vehicleId: "car1" }] }, ezpass: { records: [{ id: "toll" }] } },
+    settings: { timeZone: "America/New_York", graceMinutes: 0 }, fleet: {
+      vehicles: [{ vehicleId: "car1", label: "Car one", sourcePlate: "NY:ABC-123", sourcePlateConfirmed: false }], assignments: [],
+      identifierInventory: { items: [{ kind: "plate", identifier: "License plate NY ABC-123", canonicalIdentifier: "ABC123" },
+        { kind: "tag", identifier: "Tag # 001", canonicalIdentifier: "001" }], updatedAt: "2026-01-01T00:00:00.000Z" }
+    },
     uiDrafts: { vehicleAssignment: { vehicleId: "car1", label: "Car one", kind: "tag", identifier: "001" } },
     collectionRuns: {
       turo: { complete: true, pageCount: 1, recordCount: 1, range: { startDate: "2026-01-01", endDate: "2026-01-01" } },
@@ -26,7 +34,7 @@ async function dashboard() {
     invoiceDrafts: [{
       reservationId: "trip", vehicleId: "car1", startMs: Date.parse("2026-01-01T14:00:00Z"), endMs: Date.parse("2026-01-01T20:00:00Z"),
       eligibility: "eligible_uncharged", tolls: [{ id: "toll", timestampMs: Date.parse("2026-01-01T16:00:00Z"), plaza: "Example", amountCents: 425, tagId: "001" }],
-      selectedTollIds: ["toll"], selected: false, selectable: true, blockingReasons: [], totalCents: 425
+      selectedTollIds: ["toll"], selected: true, selectable: true, blockingReasons: [], totalCents: 425
     }],
     selectionSummary: { tripCount: 0, tollCount: 0, totalCents: 0 }, reconciliation: { matched: [], unmatchedTolls: [{
       toll: { id: "review-toll", timestampMs: Date.parse("2026-01-01T16:00:00Z"), plaza: "Example", amountCents: 425, tagOrPlate: "000123" },
@@ -40,6 +48,7 @@ async function dashboard() {
     if (message.type === "UPSERT_ASSIGNMENT") {
       state.fleet.assignments.push({ id: "a1", ...message.assignment }); state.uiDrafts.vehicleAssignment = {};
     }
+    if (message.type === "REFRESH_EZPASS_IDENTIFIERS") return { ok: true, state: structuredClone(state), inventory: structuredClone(state.fleet.identifierInventory) };
     return { ok: true, state: structuredClone(state), synced: true, collection: { turo: { ok: true }, ezpass: { ok: true } } };
   } } };
   vm.runInNewContext(readFileSync("dashboard.js", "utf8"), { document, chrome, Intl, Date, Object, Set, clearTimeout, setTimeout, structuredClone });
@@ -66,13 +75,14 @@ test("dashboard submits a dated assignment and clears the completed form", async
 test("dashboard renders trip cards and sends trip selection changes", async () => {
   const env = await dashboard();
   assert.equal(env.elements.get("#tripsList").children.length, 1);
+  assert.equal(env.elements.get("#batchList").children.length, 1);
   assert.equal(env.elements.get("#coverageStatus").textContent, "All configured trip identifiers searched");
   assert.match(env.elements.get("#ezpassCompleteness").textContent, /last page 3.*requested 2026-01-01.*observed 2025-12-01/);
-  await env.elements.get("#tripsList").listeners.change({ target: {
-    checked: true, dataset: { action: "trip", reservationId: "trip" }
-  } });
+  const button = descendants(env.elements.get("#tripsList")).find((item) => item.dataset.action === "trip");
+  await env.elements.get("#tripsList").listeners.click({ target: button });
   assert.equal(env.messages.at(-1).type, "SET_TRIP_SELECTION");
   assert.equal(env.messages.at(-1).reservationId, "trip");
+  assert.equal(env.messages.at(-1).selected, false);
 });
 
 test("dashboard exposes vehicles, trips, review and batch pages", async () => {
@@ -87,25 +97,48 @@ function descendants(node) {
   return [node, ...(node?.children || []).flatMap(descendants)];
 }
 
-test("vehicle cards distinguish Turo IDs and prefill discovered plates without saving", async () => {
+test("vehicle cards distinguish Turo IDs and immediately link verified plates", async () => {
   const env = await dashboard();
   const text = descendants(env.elements.get("#assignmentList")).map((item) => item.textContent).join(" ");
   assert.match(text, /Turo internal vehicle ID: car1 — not an E-ZPass tag/);
   const button = descendants(env.elements.get("#assignmentList")).find((item) => item.dataset.mapKind === "plate");
   await env.elements.get("#assignmentList").listeners.click({ target: button });
-  assert.equal(env.elements.get("#identifier").value, "NY:ABC-123");
-  assert.equal(env.elements.get("#identifierKind").value, "plate");
-  assert.equal(env.messages.at(-1).type, "SAVE_UI_DRAFT");
-  assert.equal(env.messages.some((message) => message.type === "UPSERT_ASSIGNMENT"), false);
+  const save = env.messages.find((message) => message.type === "UPSERT_ASSIGNMENT");
+  assert.equal(save.assignment.identifier, "ABC123");
+  assert.equal(save.assignment.kind, "plate");
 });
 
-test("needs review counts each toll once and pre-fills a mixed identifier choice", async () => {
+test("needs review opens an inline editor and saves only after confirmation", async () => {
   const env = await dashboard();
   assert.equal(env.elements.get("#navReviewCount").textContent, 1);
   const buttons = descendants(env.elements.get("#tollReviewList")).filter((item) => item.dataset.mapVehicleId);
   assert.deepEqual(buttons.map((button) => button.dataset.mapKind), ["tag", "plate"]);
   await env.elements.get("#tollReviewList").listeners.click({ target: buttons[0] });
-  assert.equal(env.elements.get("#vehicleId").value, "car1");
-  assert.equal(env.elements.get("#identifier").value, "000123");
-  assert.equal(env.messages.at(-1).type, "SAVE_UI_DRAFT");
+  assert.equal(env.messages.some((message) => message.type === "UPSERT_ASSIGNMENT"), false);
+  const form = descendants(env.elements.get("#tollReviewList")).find((item) => item.className === "review-mapping-editor");
+  assert.ok(form);
+  await form.listeners.submit({ preventDefault() {} });
+  const save = env.messages.findLast((message) => message.type === "UPSERT_ASSIGNMENT");
+  assert.equal(save.assignment.vehicleId, "car1");
+  assert.equal(save.assignment.identifier, "000123");
+  assert.equal(save.assignment.kind, "tag");
+});
+
+test("account inventory populates the preferred selector and manual entry remains explicit", async () => {
+  const env = await dashboard();
+  const options = env.elements.get("#accountIdentifier").children;
+  assert.deepEqual(options.slice(1).map((option) => option.value), ["plate:ABC123", "tag:001"]);
+  assert.equal(env.elements.get("#manualIdentifierFields").hidden, true);
+  assert.equal(env.elements.get("#identifier").required, false);
+  env.elements.get("#manualIdentifierButton").listeners.click();
+  assert.equal(env.elements.get("#manualIdentifierFields").hidden, false);
+  assert.equal(env.elements.get("#identifier").required, true);
+});
+
+test("inventory refresh and evidence handoff buttons invoke real worker operations", async () => {
+  const env = await dashboard();
+  await env.elements.get("#refreshIdentifiersButton").listeners.click();
+  assert.equal(env.messages.at(-1).type, "REFRESH_EZPASS_IDENTIFIERS");
+  await env.elements.get("#goEvidenceButton").listeners.click();
+  assert.equal(env.messages.at(-1).type, "OPEN_EZPASS_EVIDENCE");
 });

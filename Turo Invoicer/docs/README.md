@@ -1,6 +1,6 @@
 # Project documentation
 
-This reference describes version 0.5.9: trip-first exact E-ZPass searches, listbox-scoped numbered identifier choices, post-Search result verification and per-trip incomplete reports, masked date-input entry, schema-5 evidence and approval state, authenticated Turo status checks, local IndexedDB screenshots, and the four-page dashboard. Last reviewed: September 12, 2026.
+This reference describes version 0.5.13: trip-first exact E-ZPass direct-query navigation, a persistent refreshable identifier inventory, strict URL/result verification and per-trip incomplete reports, schema-6 fleet and automatic Batch state, authenticated Turo status checks, local IndexedDB screenshots, and the four-page dashboard. Last reviewed: September 21, 2026.
 
 ## Reading paths
 

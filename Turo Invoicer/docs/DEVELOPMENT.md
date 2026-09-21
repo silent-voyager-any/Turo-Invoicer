@@ -15,15 +15,15 @@ There are no npm dependencies, bundler, transpiler, or required build outputs. N
 
 ## Test inventory
 
-The current suite has 109 tests across:
+The v0.5.13 suite has 162 tests across:
 
 - `tests/reconciler.test.js`: time zones, DST folds/gaps, calendar validity, amounts, intervals, canonical identifiers, mappings, grace, immutability.
 - `tests/content.test.js`: field reduction, DOM fallbacks, bridge validation, delayed insertion, attribute hydration, network wakeup, settling, cancellation, concurrent waiters, container isolation.
 - `tests/background.test.js`: trusted popup/dashboard senders, atomic state, failed-source preservation, serialized operations, schema migration, autosaved drafts, dated-assignment overlap rejection, settings and clearing.
 - `tests/network.test.js`: fetch response preservation, path/domain filtering, XHR reuse, malformed JSON, exact-page gating, and request-start provenance.
 - `tests/popup.test.js`: dashboard launching, source counts, sync status, and clear-data behavior.
-- `tests/dashboard.test.js`: draft persistence, vehicle cards, mapping prefill, unique review counts, date bounds, and assignment commands.
-- `tests/workspace.test.js`: trip-centric grouping, confirmed-vehicle gating, sent-fingerprint exclusion, persisted toll/trip selection, and cent totals.
+- `tests/dashboard.test.js`: draft persistence, verified vehicle linking, inline review mapping, unique review counts, inventory refresh, evidence handoff, and assignment commands.
+- `tests/workspace.test.js`: trip-centric grouping, confirmed-vehicle gating, stale-report filtering, automatic Batch inclusion, explicit removal, persisted toll selection, and cent totals.
 - Additional history cases cover completed-only intervals, off-route rejection, and old-state invalidation; E-ZPass cases cover delayed rows, header variants, mixed identifiers, and posted-only rejection.
 - Detail-read cases cover synthetic `baseTripCard` discovery, generated endpoint allowlists, exact reservation identity, nested epoch and local timestamps, conflicting or malformed JSON, response type/size/URL validation, concurrency, cancellation, failures, and avoiding unnecessary GETs. The synthetic fixture mirrors the field shape inspected in an authenticated browser without retaining account data.
 - Invoice-status cases cover exact route gating, duplicate detail links, Tolls-item detection inside the verified container, enabled TOLLS-option detection, temporary-tab cleanup, existing invoices, and eligible uncharged trips.
@@ -60,7 +60,7 @@ Verify currency units and passage timestamps. Do not broaden endpoint capture or
 - [ ] Other Turo pages never contribute records; prefetched future trips are excluded.
 - [ ] Only the fixed detail endpoint for history-linked numeric reservation IDs is requested during sync, with no redirects or background polling.
 - [ ] Actual detail JSON yields the correct epoch boundaries and vehicle ID; malformed, non-JSON, signed-out, and changed-schema responses fail safely.
-- [ ] E-ZPass filters and manual tag entry are exercised against redacted fixtures.
+- [ ] E-ZPass identifier inventory, verified linking, manual fallback, and inline Needs Review mapping are exercised in a signed-in browser.
 - [ ] Wrong/unsupported schemas time out without overwriting saved data.
 - [ ] Navigation, popup closure/reopening, extension reload, and worker suspension are exercised.
 - [ ] Back/forward cache restoration reattaches capture correctly.

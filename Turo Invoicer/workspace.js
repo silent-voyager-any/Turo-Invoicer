@@ -41,7 +41,8 @@ function sentFingerprints(ledger) {
 
 export function buildTripWorkspace({
   trips = [], reconciliation = null, previousDrafts = [], tripEligibility = {},
-  collectionRuns = {}, submissionLedger = [], evidence = [], timeZone = "America/New_York"
+  collectionRuns = {}, submissionLedger = [], evidence = [], timeZone = "America/New_York",
+  activeQueryIds = null
 } = {}) {
   const old = previousByTrip(previousDrafts);
   const matches = confirmedMatches(reconciliation);
@@ -61,11 +62,11 @@ export function buildTripWorkspace({
     const selectedTollIds = prior?.selectionTouched
       ? (prior.selectedTollIds || []).map(text).filter((id) => validIds.has(id))
       : tolls.map((toll) => toll.id);
-    const selected = prior?.selected === true;
     const blockingReasons = [];
     if (!runComplete(collectionRuns, "turo")) blockingReasons.push("turo_collection_incomplete");
     const tripQueryReports = Array.isArray(collectionRuns?.ezpass?.queryReports)
-      ? collectionRuns.ezpass.queryReports.filter((report) => text(report.reservationId) === reservationId) : [];
+      ? collectionRuns.ezpass.queryReports.filter((report) => text(report.reservationId) === reservationId &&
+        (!activeQueryIds || activeQueryIds.has(text(report.queryId)))) : [];
     // A partial run blocks only reservations whose required searches did not
     // complete; unrelated verified reservations remain available for review.
     if (collectionRuns?.ezpass?.complete !== true && !tripQueryReports.length) {
@@ -82,6 +83,8 @@ export function buildTripWorkspace({
     if (!tolls.length) blockingReasons.push("no_matching_tolls");
     if (!selectedTollIds.length && tolls.length) blockingReasons.push("no_tolls_selected");
     const selectable = blockingReasons.length === 0;
+    const batchSelectionTouched = prior?.batchSelectionTouched === true;
+    const selected = selectable && (batchSelectionTouched ? prior?.selected === true : true);
     const totalCents = tolls.filter((toll) => selectedTollIds.includes(toll.id))
       .reduce((sum, toll) => sum + (Number.isInteger(toll.amountCents) ? toll.amountCents : 0), 0);
     const tripEvidence = (Array.isArray(evidence) ? evidence : []).filter((item) =>
@@ -108,9 +111,11 @@ export function buildTripWorkspace({
       tolls,
       selectedTollIds,
       selectionTouched: prior?.selectionTouched === true,
-      selected: selectable && selected,
+      selected,
+      batchSelectionTouched,
       selectable,
       blockingReasons,
+      activeQueryIds: activeQueryIds ? [...activeQueryIds].filter((id) => id.startsWith(`${reservationId}:`)) : null,
       totalCents,
       evidenceIds: tripEvidence.map((item) => item.id),
       evidenceComplete,
@@ -140,8 +145,9 @@ export function setTollSelection(drafts, reservationId, tollId, selected) {
     const reasons = (draft.blockingReasons || []).filter((reason) => reason !== "no_tolls_selected");
     if (!selectedTollIds.length) reasons.push("no_tolls_selected");
     const selectable = reasons.length === 0;
+    const nextSelected = selectable && (draft.batchSelectionTouched ? draft.selected === true : true);
     return { ...draft, selectedTollIds, selectionTouched: true, totalCents, blockingReasons: reasons, selectable,
-      selected: selectable && draft.selected, tripApproved: false, approvedRevision: null,
+      selected: nextSelected, tripApproved: false, approvedRevision: null,
       evidenceComplete: false, batchReady: false, status: selectable ? "needs_evidence" : "manual_review" };
   });
 }
@@ -152,14 +158,17 @@ export function setTripSelection(drafts, reservationId, selected) {
     if (text(draft.reservationId) !== text(reservationId)) return draft;
     found = true;
     if (selected && !draft.selectable) throw new Error("Trip is not ready for selection.");
-    return { ...draft, selected: selected === true, ...(selected ? {} : { tripApproved: false, approvedRevision: null }) };
+    return { ...draft, selected: selected === true, batchSelectionTouched: true,
+      ...(selected ? {} : { tripApproved: false, approvedRevision: null }) };
   });
   if (!found) throw new Error("Trip draft was not found.");
   return next;
 }
 
 export function selectAllReady(drafts, selected = true) {
-  return drafts.map((draft) => ({ ...draft, selected: selected === true && draft.selectable === true }));
+  return drafts.map((draft) => draft.selectable === true
+    ? { ...draft, selected: selected === true, batchSelectionTouched: true }
+    : draft);
 }
 
 export function setTripApproval(drafts, reservationId, approved) {
