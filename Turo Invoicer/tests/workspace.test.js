@@ -126,3 +126,30 @@ test("evidence coverage enables individual approval and revisions invalidate it"
   const rebuilt = workspace({ previousDrafts: drafts, evidence: [{ id: "shot-2", hash: "changed", reservationId: "trip-1", coveredTollIds: ["toll-1"] }] });
   assert.equal(rebuilt.drafts[0].tripApproved, false);
 });
+
+test("removing one Batch trip leaves another ready for individual approval", () => {
+  const second = { ...trip, id: "trip-2" };
+  const result = workspace({
+    trips: [trip, second],
+    reconciliation: { matched: [
+      { trip, toll, vehicleConfirmed: true },
+      { trip: second, toll: { ...toll, id: "toll-2" }, vehicleConfirmed: true }
+    ] },
+    tripEligibility: { "trip-1": { status: "eligible_uncharged" }, "trip-2": { status: "eligible_uncharged" } },
+    evidence: [
+      { id: "shot-1", hash: "a", reservationId: "trip-1", coveredTollIds: ["toll-1"] },
+      { id: "shot-2", hash: "b", reservationId: "trip-2", coveredTollIds: ["toll-2"] }
+    ]
+  });
+  let drafts = setTripSelection(result.drafts, "trip-2", false);
+  drafts = setTripApproval(drafts, "trip-1", true);
+  assert.equal(drafts.find((draft) => draft.reservationId === "trip-1").tripApproved, true);
+  assert.equal(drafts.find((draft) => draft.reservationId === "trip-2").selected, false);
+  assert.equal(drafts.filter((draft) => draft.selected).length, 1);
+});
+
+test("changed date range blocks cached drafts until that scope is synced", () => {
+  const result = workspace({ dateRangeNeedsSync: true });
+  assert.ok(result.drafts[0].blockingReasons.includes("date_range_not_synced"));
+  assert.equal(result.summary.tripCount, 0);
+});

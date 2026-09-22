@@ -4,7 +4,7 @@ A local-first Chrome extension that helps Turo hosts reconcile NY E-ZPass toll a
 
 The extension observes data loaded in your signed-in browser tabs, matches toll timestamps to trip intervals, and presents suggestions for review. It does not require a server, store portal passwords, or submit reimbursement claims.
 
-> **Initial functional reconciliation release: v0.5.13.** The extension verifies completed Turo trips, searches E-ZPass by exact confirmed tag or plate, groups matched tolls, and supports local evidence and batch approval. It does **not** submit reimbursement claims to Turo; hosts must review results and submit claims themselves.
+> **Current beta: v0.5.14-beta.1.** The extension verifies completed Turo trips, searches E-ZPass by exact confirmed tag or plate across all result pages, groups matched tolls, and supports local evidence and batch approval. It does **not** submit reimbursement claims to Turo; hosts must review results and submit claims themselves.
 
 ## Features
 
@@ -17,12 +17,14 @@ The extension observes data loaded in your signed-in browser tabs, matches toll 
 - Inclusive trip-window matching with optional grace periods.
 - Dated tag/plate-to-Turo-vehicle assignments, inline unresolved-toll review, and explicit overlap/conflict handling.
 - Automatic Batch inclusion for ready trips, with per-trip removal, evidence capture, and local approval.
+- Reversible vehicle removal and an optional inclusive trip-end date range.
+- Verified E-ZPass page-size changes and complete filtered-result pagination, with per-page evidence capture.
 - Local snapshots, atomic two-source sync, and a clear-data control.
 - No backend uploads, analytics, remote scripts, or automatic claim submission.
 
-## Initial release: v0.5.13
+## Current beta: v0.5.14-beta.1
 
-The four-page dashboard now lets hosts link verified E-ZPass account identifiers to discovered Turo vehicles, review unresolved tolls inline, and see ready trips enter Batch automatically. Identifier-list refresh leaves the saved trip/toll snapshot intact. Exact identifier, time-window, pagination, and source-completeness checks still fail closed when the portal cannot be verified. See [release notes](RELEASE_NOTES.md) for capabilities, migration, verification, and limitations.
+The four-page dashboard lets hosts link verified E-ZPass account identifiers to discovered Turo vehicles, hide and restore vehicles, review unresolved tolls inline, and manage individual Batch trips. Identifier-list refresh leaves the saved trip/toll snapshot intact. E-ZPass collection now re-reads the live table after changing View size and traverses every results page; uncertain pagination fails closed rather than saving a partial total. See [release notes](RELEASE_NOTES.md) for migration, verification, and limitations.
 
 ### Earlier development updates
 

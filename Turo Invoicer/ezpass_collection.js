@@ -162,7 +162,13 @@
     let stableSince = 0, last = null;
     try { return await waitFor(() => {
       const sample = samplePage(readDom, parseRecord);
-      const pageAdvanced = expectedPageNumber == null || sample.pageNumber === expectedPageNumber;
+      // Selecting View 100 may fit every result on one page. E-ZPass then
+      // removes the pager entirely, so there is no "page 1" button to read.
+      // This is valid only for a stable first-page resize, never for Next.
+      const pageAdvanced = expectedPageNumber == null || sample.pageNumber === expectedPageNumber ||
+        (expectedPageNumber === 1 && !sample.hasPager && sample.raw.length > 0 &&
+          controls(transactionMain(), '[role="combobox"][aria-label="View"]')
+            .some((node) => isVisible(node) && /^100$/.test(normalizedText(node))));
       // The live portal briefly removes the table and renders "No transactions
       // found" after a pager click. Never accept that placeholder while an
       // expected page transition is pending.
@@ -290,26 +296,55 @@
     const combos = controls(transactionMain(), '[role="combobox"][aria-label="View"]')
       .filter(isVisible);
     if (combos.length !== 1 || /\b100\b/.test(normalizedText(combos[0]))) return page;
+    const previousView = normalizedText(combos[0]);
+    let option;
     try {
       // MUI mounts its listbox outside the table and opens it on pointer-style
       // interaction. Dispatching mousedown before click mirrors that contract.
       await continueActiveSessionIfNeeded();
       combos[0].dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
       await portalAction(combos[0], "page-size menu");
-      const option = await waitFor(() => {
+      option = await waitFor(() => {
         const matches = controls(document, '[role="option"]')
           .filter((node) => isVisible(node) && /^100$/.test(normalizedText(node)));
         return matches.length === 1 ? matches[0] : null;
       }, 2000, "page-size option unavailable");
-      await portalAction(option, "page-size selection");
-      assertRoute("page-size selection");
-      return await settledPage(readDom, parseRecord, page.signature, 1);
-    } catch {
-      // Page size is an optimization, never a completeness requirement. The
-      // pager below still proves and collects every result page.
-      assertRoute("page-size selection");
-      return page;
+    } catch (error) {
+      // Only a *proven unchanged* page may fall back to the existing size.
+      // Returning the old page after a partial React resize can otherwise
+      // turn ten stale rows plus a newly absent pager into false completeness.
+      if (error.message !== "page-size option unavailable") throw error;
+      assertRoute("page-size menu");
+      if (controls(document, '[role="option"]').some(isVisible)) {
+        await portalAction(combos[0], "page-size menu dismissal");
+      }
+      const live = samplePage(readDom, parseRecord);
+      if (controls(document, '[role="option"]').some(isVisible) ||
+          normalizedText(combos[0]) !== previousView || live.signature !== page.signature ||
+          live.hasPager !== page.hasPager || !live.hasPager || !nextControl() || isDisabled(nextControl())) {
+        throw adapterError("E-ZPass page size could not be verified; no partial toll total was saved.",
+          "EZPASS_PAGE_STALLED", "page_size_unverified");
+      }
+      return live;
     }
+    await portalAction(option, "page-size selection");
+    assertRoute("page-size selection");
+    let resized;
+    try { resized = await settledPage(readDom, parseRecord, page.signature, 1); }
+    catch (error) {
+      throw adapterError(`E-ZPass page-size change did not settle: ${error.message}`,
+        "EZPASS_PAGE_STALLED", "page_size_unverified");
+    }
+    const live = samplePage(readDom, parseRecord);
+    const currentView = controls(transactionMain(), '[role="combobox"][aria-label="View"]')
+      .filter(isVisible);
+    if (currentView.length !== 1 || !/^100$/.test(normalizedText(currentView[0])) ||
+        resized.signature !== live.signature || resized.hasPager !== live.hasPager ||
+        resized.raw.length <= page.raw.length || (resized.hasPager && resized.pageNumber !== 1)) {
+      throw adapterError("E-ZPass page-size change did not expose a verified live first page.",
+        "EZPASS_PAGE_STALLED", "page_size_unverified");
+    }
+    return live;
   }
 
   function rawTimestamp(item) {
@@ -1081,31 +1116,51 @@
   }
 
   async function collectFilteredPages(firstPage, query, readDom, parseRecord, onEvidencePage, deadline = Infinity) {
+    deadline = Math.min(deadline, Date.now() + RUN_TIMEOUT_MS);
     let page = firstPage;
     if (!page.noTransactions) page = await rewindToFirstPage(page, readDom, parseRecord, Date.now() + RUN_TIMEOUT_MS);
     if (!page.noTransactions) page = await maximizePageSize(page, readDom, parseRecord);
-    const records = [], signatures = new Set();
+    const records = new Map(), signatures = new Set();
     let pageCount = 0, rawCount = 0;
     for (;;) {
+      if (pageCount >= MAX_TOTAL_PAGES) throw adapterError("E-ZPass filtered pagination reached its safety cap.",
+        "EZPASS_PAGE_STALLED", "page_not_advanced");
       if (Date.now() >= deadline) {
         const error = new Error("E-ZPass search reached its run deadline.");
         error.code = "EZPASS_SEARCH_INCOMPLETE"; error.reason = "run_deadline";
         throw error;
       }
       if (signatures.has(page.signature)) throw new Error("E-ZPass repeated a filtered result page.");
+      const live = samplePage(readDom, parseRecord);
+      if (live.signature !== page.signature || live.hasPager !== page.hasPager) {
+        throw adapterError("E-ZPass result page changed before it could be verified.",
+          "EZPASS_PAGE_STALLED", "page_not_advanced");
+      }
       signatures.add(page.signature); pageCount += 1; rawCount += page.raw.length;
-      records.push(...page.records);
+      for (const [index, record] of page.records.entries()) {
+        const key = record.id ? String(record.id) : `unidentified:${pageCount}:${index}`;
+        const prior = records.get(key);
+        if (prior && JSON.stringify(prior) !== JSON.stringify(record)) {
+          throw new Error("E-ZPass returned conflicting duplicate Lane Txn IDs across pages.");
+        }
+        records.set(key, record);
+      }
       if (onEvidencePage && page.records.length) await onEvidencePage(query, page.records, pageCount);
       if (page.noTransactions && !page.records.length) break;
-      if (!paginationRoot()) break;
+      if (!paginationRoot()) {
+        if (page.hasPager) throw adapterError("E-ZPass pager disappeared before completeness was verified.",
+          "EZPASS_PAGE_STALLED", "page_not_advanced");
+        break;
+      }
       const next = nextControl();
       if (!next) throw new Error("E-ZPass Next control is missing from filtered results.");
       if (isDisabled(next)) break;
+      if (!Number.isInteger(page.pageNumber)) throw new Error("E-ZPass current result page number is unavailable.");
       const expected = page.pageNumber + 1;
       await portalAction(next, "filtered pagination");
       page = await settledPage(readDom, parseRecord, page.signature, expected);
     }
-    return { records, pageCount, rawCount };
+    return { records: [...records.values()], pageCount, rawCount };
   }
 
   async function collectQueries({ queryJobs, parseRecord, readDom, onEvidencePage, getNetworkRevision }) {

@@ -10,6 +10,8 @@ main { max-width: 1180px; margin: auto; padding: 18px 24px 44px; } h1, h2, h3, p
 .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #95a09b; box-shadow: 0 0 0 4px #dfe5e1; }
 .status-dot.good { background: #1f9d6a; } .status-dot.busy { background: #d79b2b; } .status-dot.error { background: #c95454; }
 .status { min-height: 23px; color: #5f6d66; font-size: 13px; } .status.error { color: #a13c3c; }
+.trip-date-form { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin: 2px 0 14px; }
+.trip-date-form label { min-width: 150px; } .trip-date-form .muted { align-self: center; }
 .source-state { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .source-state span { padding: 5px 9px; border-radius: 99px; background: #e5ebe7; color: #52615a; font-size: 11px; }
 .source-state span.complete { background: #d8eee3; color: #146044; } .source-state span.incomplete { background: #f5e5c8; color: #7c5715; }
@@ -55,6 +57,7 @@ input, select, #selectAllButton { min-height: 39px; padding: 0 10px; border: 1px
 .review-heading { margin-top: 24px; }
 .batch-summary { display: flex; gap: 10px; margin: 16px 0; } .batch-summary strong { padding: 9px 12px; border-radius: 9px; background: #eef3ef; }
 .batch-action { margin-top: 18px; } .safety { padding: 12px; border: 1px solid #ead6ae; border-radius: 9px; background: #fff8e9; }
+.submission-preview { display: grid; gap: 8px; margin-top: 12px; }
 .evidence-gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
 .evidence-item { margin: 0; padding: 10px; border: 1px solid #d9e2dc; border-radius: 12px; }
 .evidence-item img { width: 100%; max-height: 220px; object-fit: contain; background: #eef3ef; border-radius: 8px; }

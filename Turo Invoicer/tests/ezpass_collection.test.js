@@ -633,8 +633,11 @@ test("proves descending page chronology and rejects boundary reversals", () => {
 });
 
 function portalFixture({ pages, startPage = 0, activeFilter = false, descendingSort = true,
-  repeatNext = false, omitPrevious = false, omitNext = false, omitPager = false, transientEmptyMs = 0 }) {
+  repeatNext = false, omitPrevious = false, omitNext = false, omitPager = false, transientEmptyMs = 0,
+  pageSize = null }) {
   let pageIndex = startPage;
+  let renderedPages = pages;
+  let viewValue = "10", menuOpen = false, viewClicks = 0;
   let loading = false;
   const clicks = { previous: 0, next: 0, transactionDate: 0, filter: 0, search: 0 };
   const visible = () => ({ length: 1 });
@@ -645,9 +648,21 @@ function portalFixture({ pages, startPage = 0, activeFilter = false, descendingS
   };
   const next = {
     textContent: "Go to next page", hidden: false, get offsetParent() { return {}; }, getClientRects: visible,
-    get disabled() { return pageIndex === pages.length - 1; }, getAttribute: (name) => name === "aria-label" ? "Go to next page" : null,
-    click() { clicks.next += 1; if (!repeatNext) pageIndex = Math.min(pages.length - 1, pageIndex + 1); if (transientEmptyMs) { loading = true; setTimeout(() => { loading = false; }, transientEmptyMs); } }
+    get disabled() { return pageIndex === renderedPages.length - 1; }, getAttribute: (name) => name === "aria-label" ? "Go to next page" : null,
+    click() { clicks.next += 1; if (!repeatNext) pageIndex = Math.min(renderedPages.length - 1, pageIndex + 1); if (transientEmptyMs) { loading = true; setTimeout(() => { loading = false; }, transientEmptyMs); } }
   };
+  const view = {
+    get textContent() { return viewValue; }, hidden: false, get offsetParent() { return {}; }, getClientRects: visible,
+    getAttribute: (name) => name === "aria-label" ? "View" : null,
+    dispatchEvent() {
+      menuOpen = true;
+      if (pageSize === "partial") { viewValue = "100"; renderedPages = [pages.flat()]; pageIndex = 0; }
+    },
+    click() { viewClicks += 1; if (viewClicks > 1) menuOpen = false; }
+  };
+  const hundred = { textContent: "100", hidden: false, get offsetParent() { return {}; }, getClientRects: visible,
+    click() { viewValue = "100"; menuOpen = false; renderedPages = [pages.flat()]; pageIndex = 0; } };
+  const fifty = { textContent: "50", hidden: false, get offsetParent() { return {}; }, getClientRects: visible };
   const unrelated = ["Transaction Date", "Filter", "Search"].map((text) => ({
     textContent: text, hidden: false, disabled: false, get offsetParent() { return {}; }, getClientRects: visible,
     getAttribute: () => null,
@@ -675,11 +690,12 @@ function portalFixture({ pages, startPage = 0, activeFilter = false, descendingS
   };
   const main = {
     querySelectorAll(selector) {
-      if (selector.includes('nav[aria-label="pagination navigation"]')) return omitPager ? [] : [pager];
+      if (selector.includes('nav[aria-label="pagination navigation"]')) return omitPager ||
+        (viewValue === "100" && renderedPages.length === 1) ? [] : [pager];
       if (selector === "button, [role='button'], input[type='submit'], input[type='button']") {
         return [...(omitPrevious ? [] : [previous]), active, ...(omitNext ? [] : [next]), ...unrelated];
       }
-      if (selector === '[role="combobox"][aria-label="View"]') return [];
+      if (selector === '[role="combobox"][aria-label="View"]') return pageSize ? [view] : [];
       if (selector === "input") return [filterInput];
       if (selector === "th, [role='columnheader']") return [dateHeader];
       return [];
@@ -688,13 +704,14 @@ function portalFixture({ pages, startPage = 0, activeFilter = false, descendingS
   context.document = {
     body: { get textContent() { return loading ? "No transactions found" : ""; } },
     querySelector: (selector) => selector === "main, [role='main']" ? main : null,
-    querySelectorAll: (selector) => main.querySelectorAll(selector)
+    querySelectorAll: (selector) => selector === '[role="option"]' && menuOpen
+      ? pageSize === "success" ? [hundred] : [fifty] : main.querySelectorAll(selector)
   };
-  const readDom = (add) => { if (!loading) pages[pageIndex].forEach(add); };
+  const readDom = (add) => { if (!loading) renderedPages[pageIndex].forEach(add); };
   const parseRecord = (row) => row.amount ? {
     id: row.id, timestamp: row.timestamp, plaza: row.plaza || "Example", amount: row.amount
   } : null;
-  return { readDom, parseRecord, clicks, get pageIndex() { return pageIndex; } };
+  return { readDom, parseRecord, clicks, get pageIndex() { return pageIndex; }, get viewValue() { return viewValue; } };
 }
 
 test("collects existing rows without touching filters and stops after the oldest trip", async () => {
@@ -756,11 +773,65 @@ test("accepts a stable nonempty one-page result when E-ZPass omits pagination", 
   assert.equal(result.terminalReason, "single_page_no_pager");
   assert.deepEqual(clone(result.records).map(({ id }) => id), ["one"]);
 
-  const firstPage = { noTransactions: false, signature: "filtered-one", pageNumber: null,
-    raw: [{ id: "one" }], records: [{ id: "one" }] };
-  const filtered = await api.testing.collectFilteredPages(firstPage, {}, () => {}, (value) => value);
+  const firstPage = api.testing.samplePage(fixture.readDom, fixture.parseRecord);
+  const filtered = await api.testing.collectFilteredPages(firstPage, {}, fixture.readDom, fixture.parseRecord);
   assert.equal(filtered.pageCount, 1);
-  assert.deepEqual(clone(filtered.records), [{ id: "one" }]);
+  assert.deepEqual(clone(filtered.records).map(({ id }) => id), ["one"]);
+});
+
+test("collects ten toll debits across a ten-row page and its second page, excluding credits", async () => {
+  const debit = (id, cents, index) => ({ id, transactionId: id, timestamp: `09/20/2026 ${12 - index}:00 PM`,
+    plaza: "Example", amount: `-$${(cents / 100).toFixed(2)}`, amountCents: cents });
+  const credit = (id, index) => ({ id, transactionId: id, timestamp: `09/20/2026 ${12 - index}:30 PM`,
+    activity: "NTOL CREDIT", amount: "$1.44" });
+  const amounts = [419, 1679, 225, 113, 225, 250, 225, 113, 225];
+  const firstRows = [...amounts.map((cents, index) => debit(`toll-${index + 1}`, cents, index)), credit("credit-1", 9)];
+  const secondRows = [debit("toll-10", 419, 10), credit("credit-2", 11)];
+  const fixture = portalFixture({ pages: [firstRows, secondRows] });
+  const parseToll = (row) => row.activity === "NTOL CREDIT" ? null :
+    { id: row.id, timestamp: row.timestamp, plaza: row.plaza, amountCents: row.amountCents };
+  const first = api.testing.samplePage(fixture.readDom, parseToll);
+  const evidencePages = [];
+  const result = await api.testing.collectFilteredPages(first, {}, fixture.readDom, parseToll,
+    async (_query, records, page) => evidencePages.push({ page, ids: records.map((item) => item.id) }));
+  assert.equal(result.pageCount, 2);
+  assert.equal(result.rawCount, 12);
+  assert.equal(result.records.length, 10);
+  assert.equal(result.records.reduce((sum, item) => sum + item.amountCents, 0), 3893);
+  assert.deepEqual(evidencePages.map((item) => item.page), [1, 2]);
+  assert.deepEqual(clone(evidencePages[1].ids), ["toll-10"]);
+  assert.equal(fixture.clicks.next, 1);
+});
+
+test("verified View 100 expansion re-samples all rows before ending a one-page search", async () => {
+  const rows = [[{ id: "one", transactionId: "one", timestamp: "09/20/2026 2:00 PM", amount: "-$1" }],
+    [{ id: "two", transactionId: "two", timestamp: "09/20/2026 1:00 PM", amount: "-$2" }]];
+  const fixture = portalFixture({ pages: rows, pageSize: "success" });
+  const first = api.testing.samplePage(fixture.readDom, fixture.parseRecord);
+  const result = await api.testing.collectFilteredPages(first, {}, fixture.readDom, fixture.parseRecord);
+  assert.equal(fixture.viewValue, "100");
+  assert.equal(result.pageCount, 1);
+  assert.deepEqual(clone(result.records).map((item) => item.id), ["one", "two"]);
+});
+
+test("unavailable View 100 traverses current-size pages after proving the table unchanged", async () => {
+  const rows = [[{ id: "one", transactionId: "one", timestamp: "09/20/2026 2:00 PM", amount: "-$1" }],
+    [{ id: "two", transactionId: "two", timestamp: "09/20/2026 1:00 PM", amount: "-$2" }]];
+  const fixture = portalFixture({ pages: rows, pageSize: "unavailable" });
+  const first = api.testing.samplePage(fixture.readDom, fixture.parseRecord);
+  const result = await api.testing.collectFilteredPages(first, {}, fixture.readDom, fixture.parseRecord);
+  assert.equal(fixture.viewValue, "10");
+  assert.equal(result.pageCount, 2);
+  assert.deepEqual(clone(result.records).map((item) => item.id), ["one", "two"]);
+});
+
+test("a partially applied page-size change cannot save the stale first-page total", async () => {
+  const rows = [[{ id: "one", transactionId: "one", timestamp: "09/20/2026 2:00 PM", amount: "-$1" }],
+    [{ id: "two", transactionId: "two", timestamp: "09/20/2026 1:00 PM", amount: "-$2" }]];
+  const fixture = portalFixture({ pages: rows, pageSize: "partial" });
+  const first = api.testing.samplePage(fixture.readDom, fixture.parseRecord);
+  await assert.rejects(api.testing.collectFilteredPages(first, {}, fixture.readDom, fixture.parseRecord),
+    (error) => error.code === "EZPASS_PAGE_STALLED" && error.reason === "page_size_unverified");
 });
 
 test("missing and repeated pagination controls fail safely", async () => {

@@ -301,7 +301,7 @@ test("worker invalidates version-1 snapshots but migrates manual mappings", asyn
   stored.turoTollReconcilerState = { version: 1, sources: { turo: { records: [{ id: "old" }] } },
     settings: { vehicleByTag: { "001": "car1" }, vehicleByPlate: {}, graceMinutes: 15 } };
   const { state } = await call({ type: "GET_STATE" });
-  assert.equal(state.version, 6);
+  assert.equal(state.version, 7);
   assert.equal(state.sources.turo.records.length, 0);
   assert.deepEqual(state.fleet.assignments.map(({ kind, identifier, vehicleId, validFrom, validTo }) =>
     ({ kind, identifier, vehicleId, validFrom, validTo })), [
@@ -349,7 +349,7 @@ test("schema-5 state migrates without losing the synchronized snapshot", async (
     selectionSummary: { tripCount: 0, tollCount: 0, totalCents: 0 }, evidence: [], submissionLedger: [], lastSync: "prior"
   };
   const { state } = await call({ type: "GET_STATE" });
-  assert.equal(state.version, 6);
+  assert.equal(state.version, 7);
   assert.equal(state.sources.turo.records.length, 1);
   assert.equal(state.sources.ezpass.records.length, 1);
   assert.equal(state.lastSync, "prior");
@@ -374,7 +374,7 @@ test("schema-3 state migrates without treating its loaded page as complete", asy
     uiDrafts: { vehicleAssignment: {} }, evidence: [], submissionLedger: [], lastSync: "prior"
   };
   const { state } = await call({ type: "GET_STATE" });
-  assert.equal(state.version, 6);
+  assert.equal(state.version, 7);
   assert.equal(state.sources.turo.records.length, 1);
   assert.equal(state.collectionRuns.turo.complete, false);
   assert.equal(state.invoiceDrafts[0].eligibility, "status_unknown");
@@ -411,5 +411,106 @@ test("worker identifies a stale E-ZPass content script before surfacing its old 
     assert.equal(result.synced, false);
     assert.match(result.collection.ezpass.error, /older extension script.*Reload that transactions tab/i);
     assert.doesNotMatch(result.collection.ezpass.error, /Old selector/);
+  } finally { portalResponses[2] = prior; }
+});
+
+test("schema-6 snapshot migrates without losing synced records or user selections", async () => {
+  stored.turoTollReconcilerState = {
+    version: 6, sources: { turo: { records: portalResponses[1].records, updatedAt: "prior" },
+      ezpass: { records: portalResponses[2].records, updatedAt: "prior" } },
+    settings: { timeZone: "America/New_York", graceMinutes: 0 },
+    fleet: { vehicles: [{ vehicleId: "car1", label: "Car one" }], assignments: [],
+      identifierInventory: { items: [], updatedAt: null } },
+    uiDrafts: { vehicleAssignment: {} }, collectionRuns: {}, tripEligibility: {},
+    invoiceDrafts: [{ reservationId: "1001", selected: false, batchSelectionTouched: true }],
+    evidence: [], submissionLedger: [], lastSync: "prior"
+  };
+  const { state } = await call({ type: "GET_STATE" });
+  assert.equal(state.version, 7);
+  assert.equal(state.sources.turo.records.length, 1);
+  assert.equal(state.sources.ezpass.records.length, 1);
+  assert.equal(state.lastSync, "prior");
+  assert.deepEqual(state.fleet.hiddenVehicleIds, []);
+  assert.deepEqual(state.settings.tripDateRange, { startDate: "", endDate: "" });
+});
+
+test("vehicle removal is reversible and keeps source records and assignments", async () => {
+  const before = await call({ type: "GET_STATE" });
+  const sources = structuredClone(before.state.sources);
+  const removed = await call({ type: "HIDE_VEHICLE", vehicleId: "car1" }, dashboardSender);
+  assert.deepEqual(removed.state.sources, sources);
+  assert.deepEqual(removed.state.fleet.hiddenVehicleIds, ["car1"]);
+  assert.equal(removed.state.invoiceDrafts.length, 0);
+  const restored = await call({ type: "RESTORE_VEHICLE", vehicleId: "car1" }, dashboardSender);
+  assert.equal(restored.state.invoiceDrafts.length, 1);
+  assert.deepEqual(restored.state.sources, sources);
+});
+
+test("date settings validate inclusive boundaries without clearing cached records", async () => {
+  const before = await call({ type: "GET_STATE" });
+  const sources = structuredClone(before.state.sources);
+  const outside = await call({ type: "UPDATE_SETTINGS", settings: {
+    tripDateRange: { startDate: "2026-09-01", endDate: "2026-09-30" }
+  } }, dashboardSender);
+  assert.equal(outside.state.invoiceDrafts.length, 0);
+  assert.deepEqual(outside.state.sources, sources);
+  const inside = await call({ type: "UPDATE_SETTINGS", settings: {
+    tripDateRange: { startDate: "2026-07-01", endDate: "2026-07-01" }
+  } }, dashboardSender);
+  assert.equal(inside.state.invoiceDrafts.length, 1);
+  assert.equal((await call({ type: "UPDATE_SETTINGS", settings: {
+    tripDateRange: { startDate: "2026-09-30", endDate: "2026-09-01" }
+  } }, dashboardSender)).ok, false);
+});
+
+test("date-limited sync checks only in-range trip invoices and preserves older source records", async () => {
+  delete stored.turoTollReconcilerState;
+  const original = portalResponses[1];
+  portalResponses[1] = { ...original, records: [
+    original.records[0],
+    { ...original.records[0], id: "1002", start: "2026-08-01 09:00", end: "2026-08-01 18:00" }
+  ] };
+  try {
+    await call({ type: "UPDATE_SETTINGS", settings: {
+      tripDateRange: { startDate: "2026-07-01", endDate: "2026-07-31" }
+    } }, dashboardSender);
+    const beforeMessages = sentMessages.length;
+    const result = await call({ type: "RUN_SYNC" }, dashboardSender);
+    assert.equal(result.synced, true);
+    assert.equal(result.state.sources.turo.records.length, 2);
+    assert.equal(result.state.invoiceDrafts.length, 1);
+    const verified = sentMessages.slice(beforeMessages).filter(({ message }) => message.type === "COLLECT_INVOICE_STATUS");
+    assert.ok(verified.length > 0);
+    assert.ok(verified.every(({ message }) => String(message.reservationId) === "1001"));
+    assert.equal(result.state.dateRangeNeedsSync, false);
+  } finally { portalResponses[1] = original; }
+});
+
+test("unverified Turo send operations never write a sent ledger entry", async () => {
+  const before = await call({ type: "GET_STATE" });
+  const attempt = await call({ type: "SEND_APPROVED_BATCH" }, dashboardSender);
+  assert.equal(attempt.ok, false);
+  const after = await call({ type: "GET_STATE" });
+  assert.deepEqual(after.state.submissionLedger, before.state.submissionLedger);
+});
+
+test("unverified E-ZPass pagination leaves the synchronized source snapshot unchanged", async () => {
+  delete stored.turoTollReconcilerState;
+  await call({ type: "UPSERT_ASSIGNMENT", assignment: {
+    vehicleId: "car1", kind: "plate", identifier: "NY:ABC-123"
+  } }, dashboardSender);
+  const baseline = await call({ type: "RUN_SYNC" }, dashboardSender);
+  assert.equal(baseline.synced, true);
+  const prior = portalResponses[2];
+  portalResponses[2] = { ...prior, complete: false, completeForRange: false, queryReports: [{
+    queryId: "1001:plate:ABC123", reservationId: "1001", kind: "plate", status: "search_incomplete",
+    complete: false, reason: "page_size_unverified"
+  }] };
+  try {
+    const result = await call({ type: "RUN_SYNC" }, dashboardSender);
+    assert.equal(result.synced, false);
+    assert.match(result.collection.ezpass.error, /pagination could not be verified/);
+    assert.deepEqual(result.state.sources, baseline.state.sources);
+    assert.equal(result.state.lastSync, baseline.state.lastSync);
   } finally { portalResponses[2] = prior; }
 });

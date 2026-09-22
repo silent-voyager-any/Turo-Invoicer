@@ -19,6 +19,12 @@
     </nav>
     <main>
       <p id="status" class="status" role="status" aria-live="polite">Loading…</p>
+      <form id="tripDateForm" class="trip-date-form" aria-label="Uncharged trip date range">
+        <label>Trip end from <input id="tripStartDate" type="date" /></label>
+        <label>Trip end through <input id="tripEndDate" type="date" /></label>
+        <button class="secondary" type="submit">Apply dates</button>
+        <span id="tripDateStatus" class="muted">All completed trips</span>
+      </form>
       <section class="source-state" aria-label="Collection completeness">
         <span id="turoCompleteness">Turo not collected</span><span id="ezpassCompleteness">E-ZPass not collected</span><span id="coverageStatus">Coverage unavailable</span><span id="lastSync">Never synced</span>
       </section>
@@ -47,7 +53,7 @@
             <div class="date-grid"><label>Effective from<input id="validFrom" type="date" /></label><label>Effective through<input id="validTo" type="date" /></label></div>
             <button class="primary" type="submit">Link identifier to vehicle</button>
           </form>
-          <div><h3>Discovered and configured vehicles</h3><div id="assignmentList" class="stack"></div></div>
+          <div><h3>Discovered and configured vehicles</h3><div id="assignmentList" class="stack"></div><h3 class="review-heading">Removed vehicles</h3><div id="hiddenVehicleList" class="stack"></div></div>
         </div>
       </section>
 
@@ -73,8 +79,11 @@
         <div class="inline-actions batch-action">
           <button id="goEvidenceButton">Go to E-ZPass for evidence</button>
           <button id="approveBatchButton" class="primary">Approve unchanged batch</button>
+          <button id="previewBatchButton" class="secondary" type="button">Review selected invoices</button>
+          <button id="sendBatchButton" class="secondary" type="button">Send approved batch</button>
         </div>
-        <p class="safety">Evidence capture requires the visible E-ZPass Transactions tab. Use “Go to E-ZPass for evidence,” then open the extension toolbar popup and choose Prepare evidence. Version 0.5.13 prepares and approves drafts locally; it does not submit reimbursement claims to Turo.</p>
+        <div id="submissionPreview" class="submission-preview" role="status" aria-live="polite"></div>
+        <p class="safety">Evidence capture requires the visible E-ZPass Transactions tab. Use “Go to E-ZPass for evidence,” then open the extension toolbar popup and choose Prepare evidence. Turo sending is not enabled yet: the authenticated submission and success pages must be verified first. Approval does not send anything.</p>
       </section>
 
       <footer><button id="clearButton" class="text-button">Clear local data</button></footer>

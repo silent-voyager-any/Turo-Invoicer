@@ -15,7 +15,7 @@ There are no npm dependencies, bundler, transpiler, or required build outputs. N
 
 ## Test inventory
 
-The v0.5.13 suite has 162 tests across:
+The current local suite has 179 tests across:
 
 - `tests/reconciler.test.js`: time zones, DST folds/gaps, calendar validity, amounts, intervals, canonical identifiers, mappings, grace, immutability.
 - `tests/content.test.js`: field reduction, DOM fallbacks, bridge validation, delayed insertion, attribute hydration, network wakeup, settling, cancellation, concurrent waiters, container isolation.

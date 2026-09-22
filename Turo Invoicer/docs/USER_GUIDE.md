@@ -21,7 +21,7 @@ Keep exactly one matching tab per source open:
 - Turo: `https://turo.com/us/en/trips/history`.
 - E-ZPass NY: `https://www.e-zpassny.com/ezpass/dashboard/transactions`.
 
-Do not leave duplicate matching history/transactions tabs open. Version 0.5.13 searches E-ZPass separately for every eligible trip and confirmed active tag/plate using exact date-and-identifier transaction URLs in a temporary tab; it does not alter the filters in your existing tab. If a search stalls after one retry, its trip shows `search_incomplete` and cannot be selected, while other verified trips remain visible. If E-ZPass no longer offers a configured tag or plate, update or remove that assignment on Vehicles and sync again. The extension does not solve challenges or sign in for you.
+Do not leave duplicate matching history/transactions tabs open. Beta 0.5.14 searches E-ZPass separately for every eligible trip and confirmed active tag/plate using exact date-and-identifier transaction URLs in a temporary tab; it does not alter the filters in your existing tab. If a search stalls after one retry, its trip shows `search_incomplete` and cannot be selected, while other verified trips remain visible. If E-ZPass no longer offers a configured tag or plate, update or remove that assignment on Vehicles and sync again. The extension does not solve challenges or sign in for you.
 
 Use toll passage/transaction time, not posting date. Check which vehicles and reservations are actually represented. Clear data and reload before changing accounts or beginning a different date-range capture workflow: tab-memory network records can accumulate during navigation.
 
@@ -29,13 +29,17 @@ Use toll passage/transaction time, not posting date. Check which vehicles and re
 
 Open the extension, choose **Open fleet dashboard**, and click **Find uncharged trips**. The dashboard is a persistent extension tab with Vehicles, Trips, Needs review, and Batch pages, so it remains open while you switch to Turo or E-ZPass.
 
+Optionally set **Trip end from** and **Trip end through** and click **Apply dates** before finding uncharged trips. The endpoints are inclusive in the dashboard's time zone. Empty fields are open-ended; both empty fields use all completed trips. The range limits invoice-status checks, E-ZPass searches, and working Trips/Batch views. Older cached source records remain stored. After changing the range, run **Find uncharged trips** to refresh coverage.
+
 Turo waits for records containing a vehicle ID and both trip times, up to 20 seconds. A brief settling window groups nearby render updates. An incoming supported network response can also complete collection. The worker derives the dates and active identifiers for each eligible trip, inventories exact E-ZPass account identifiers, and runs verified direct queries in a temporary inactive tab. Leave your existing transactions tab open and do not navigate it during collection.
+
+For each E-ZPass search, the collector tries **View 100** and then verifies the live rows again. If that size is unavailable, it follows every results page at the current size until Next is disabled. A stalled or uncertain page-size/pager transition cannot produce a completed toll total; the previous synchronized snapshot remains in place. Trip cards show result-page, filtered-row, and matched-toll counts. “NTOL CREDIT” rows are not toll charges. After updating the extension, run a new sync to recalculate an affected trip, then refresh its evidence and approvals. Evidence capture visits each results page and may take multiple screenshots when selected rows do not fit in one viewport.
 
 During sync, history cards with numeric reservation links can trigger read-only requests to Turo's same-origin reservation-detail JSON endpoint. After the history footer and all details are verified, one temporary inactive Turo tab visits each reservation's invoice hub and relevant invoice-detail/toll-option pages. It closes in all outcomes. Existing Tolls items become `already_charged`; supported trips within 90 days with an enabled TOLLS option become `eligible_uncharged`; older or unknown cases remain blocked with a reason.
 
 Short labels such as `Aug 27 - Aug 30` do not supply a year or exact clocks. The extension only uses full detail timestamps and stable vehicle IDs. It prefers the endpoint's absolute epoch boundaries and uses complete local date/time pairs only as a fallback. Invalid JSON or an unsupported schema produces an actionable error instead of guessed dates. The extension does not inspect credentials or bypass sign-in/challenge pages.
 
-Turo must return supported completed trips. E-ZPass can return a verified empty set of tolls for completed searches. On successful sync, the worker replaces the saved two-source snapshot and recalculates suggestions; an incomplete E-ZPass query leaves its trip blocked. A failed collection leaves the prior snapshot unchanged. Check the status message and last-sync timestamp; old results are not evidence of a successful refresh.
+Turo must return supported completed trips. E-ZPass can return a verified empty set of tolls for completed searches. On successful unrestricted sync, the worker replaces the saved two-source snapshot; a date-limited sync retains older cached records while recalculating the working range. An incomplete E-ZPass query leaves its trip blocked. A failed collection leaves the prior snapshot unchanged. Check the status message and last-sync timestamp; old results are not evidence of a successful refresh.
 
 A successful sync includes terminal-page proof for both source adapters. It does not prove account ownership, portal policy compliance, or that the private portal layouts will remain unchanged.
 
@@ -48,6 +52,8 @@ Turo is not assumed to provide E-ZPass tag numbers. Prefer the verified account 
 Click **Save assignment** to persist it and recalculate the existing snapshot without reloading the portals. A combined Tag/Plate value is resolved through dated assignments only when the resulting vehicle is unique.
 
 Create separate non-overlapping dated assignments when a tag belonged to different vehicles. Conflicting tag and plate identities are sent for review rather than prioritized silently.
+
+**Remove vehicle** hides a car and its trips from the working dashboard and Batch, but retains synced records and identifier assignments. Use **Restore vehicle** in the Removed vehicles section to bring it back. Every removal action asks for confirmation first; cancellation changes nothing. Removing an assignment or evidence image is not undoable locally.
 
 ## Interpret results
 
@@ -67,13 +73,15 @@ Invalid trip timestamps are excluded from matching. The sync status can report t
 
 ## Clear local data
 
-**Clear local data** removes the saved records, results, settings, and mappings. It also requests that reachable portal captures clear memory and pause. If some tabs cannot be reached, reload them.
+**Clear local data** asks for confirmation, then removes the saved records, results, settings, and mappings. It also requests that reachable portal captures clear memory and pause. If some tabs cannot be reached, reload them.
 
 This action does not delete portal records or browser cookies. A later explicit sync may recapture visible data. There is no automatic retention expiry or undo for cleared extension data; source portal data remains available.
 
 ## History-only policy and upgrade
 
-Version 0.5.13 groups exact trip-query tolls beneath completed trips and automatically places ready trips in Batch. Use **Remove from batch** for exceptions. From Batch, choose **Go to E-ZPass for evidence**, open the toolbar popup, and choose **Prepare evidence**. Return to Batch to preview evidence, approve each trip, and approve the unchanged batch. Final Turo submission is not enabled in this release.
+Ready trips enter Batch automatically. Use **Remove from batch** on a Batch card for exceptions; the trip remains in Trips and can be restored with **Add to batch**. Removal requires confirmation. Only trips still in Batch need evidence and individual approval before **Approve unchanged batch**. From Batch, choose **Go to E-ZPass for evidence**, open the toolbar popup, and choose **Prepare evidence**. Return to Batch to preview evidence, approve each remaining trip, and approve the unchanged batch.
+
+**Review this invoice** and **Review selected invoices** show the exact selected toll amounts and evidence counts. Individual and batch send controls are visible but disabled: the authenticated Turo submission and success pages have not been verified. Approval and review do not submit a claim. Do not assume an invoice was sent until Turo itself confirms it.
 
 ## Before relying on a suggestion
 

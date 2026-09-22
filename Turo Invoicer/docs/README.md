@@ -1,6 +1,6 @@
 # Project documentation
 
-This reference describes version 0.5.13: trip-first exact E-ZPass direct-query navigation, a persistent refreshable identifier inventory, strict URL/result verification and per-trip incomplete reports, schema-6 fleet and automatic Batch state, authenticated Turo status checks, local IndexedDB screenshots, and the four-page dashboard. Last reviewed: September 21, 2026.
+This reference describes beta 0.5.14: trip-first exact E-ZPass direct-query navigation, a persistent refreshable identifier inventory, verified results-page traversal and per-trip incomplete reports, schema-7 fleet and automatic Batch state, authenticated Turo status checks, local IndexedDB screenshots, and the four-page dashboard. Last reviewed: September 21, 2026.
 
 ## Reading paths
 

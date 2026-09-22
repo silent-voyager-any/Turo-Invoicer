@@ -135,16 +135,17 @@ Storage area: `chrome.storage.local`. Key: `turoTollReconcilerState`.
 
 ```json
 {
-  "version": 6,
+  "version": 7,
   "sources": {
     "turo": { "records": [], "updatedAt": null },
     "ezpass": { "records": [], "updatedAt": null }
   },
   "settings": {
     "timeZone": "America/New_York",
-    "graceMinutes": 0
+    "graceMinutes": 0,
+    "tripDateRange": { "startDate": "", "endDate": "" }
   },
-  "fleet": { "vehicles": [], "assignments": [], "identifierInventory": { "items": [], "updatedAt": null } },
+  "fleet": { "vehicles": [], "hiddenVehicleIds": [], "assignments": [], "identifierInventory": { "items": [], "updatedAt": null } },
   "uiDrafts": { "vehicleAssignment": {} },
   "collectionRuns": {
     "turo": { "complete": false, "pageCount": 0, "recordCount": 0 },
@@ -152,6 +153,7 @@ Storage area: `chrome.storage.local`. Key: `turoTollReconcilerState`.
   },
   "tripEligibility": {},
   "invoiceDrafts": [],
+  "savedDraftChoices": {},
   "selectionSummary": { "tripCount": 0, "tollCount": 0, "totalCents": 0 },
   "evidence": [],
   "batchApproval": null,
@@ -161,6 +163,6 @@ Storage area: `chrome.storage.local`. Key: `turoTollReconcilerState`.
 }
 ```
 
-Successful sync replaces records/results and sets ISO refresh timestamps. Schema 6 retains the schema-5 trip drafts and evidence model, stores the sanitized E-ZPass identifier inventory, and records whether a user explicitly changed automatic Batch inclusion. Schema-5 records, fleet assignments, evidence, and timestamps migrate without data loss. Clearing removes metadata and IndexedDB evidence blobs.
+Unrestricted sync replaces records/results and sets ISO refresh timestamps. Date-limited sync merges older cached source records while its collection-run scope identifies what was verified. Schema 7 adds reversible vehicle hiding, optional trip-end dates, and saved draft choices across filters. A changed range blocks batching until a new sync covers it. Schema-6 records, fleet assignments, evidence, and timestamps migrate without data loss. Clearing removes metadata and IndexedDB evidence blobs.
 
 Version 0.5.0 collection runs add `queryReports` for each reservation/identifier search. E-ZPass completeness requires every filtered query to reach disabled Next and successful restoration of the original filters. Each evidence record contains only its IndexedDB key, hash, dimensions, capture/query metadata, covered toll IDs, and retention deadline.

@@ -4,7 +4,7 @@ const ids = [
   "validFrom", "validTo", "vehicleOptions", "assignmentList", "tripsList", "tollReviewList", "tripBlockerList", "batchList", "selectAllButton", "goEvidenceButton",
   "accountIdentifier", "manualIdentifierButton", "manualIdentifierFields", "identifierPreview", "inventoryStatus", "refreshIdentifiersButton",
   "batchTrips", "batchTolls", "batchTotal", "navReviewCount", "navBatchCount", "navVehicles", "navTrips", "navReview", "navBatch", "approveBatchButton",
-  "vehiclesView", "tripsView", "reviewView", "batchView"
+  "vehiclesView", "tripsView", "reviewView", "batchView", "hiddenVehicleList", "tripDateForm", "tripStartDate", "tripEndDate", "tripDateStatus", "sendBatchButton", "previewBatchButton", "submissionPreview"
 ];
 const el = Object.fromEntries(ids.map((id) => [id, document.querySelector(`#${id}`)]));
 const views = { vehicles: el.vehiclesView, trips: el.tripsView, review: el.reviewView, batch: el.batchView };
@@ -12,6 +12,8 @@ const navs = { vehicles: el.navVehicles, trips: el.navTrips, review: el.navRevie
 let draftTimer;
 let activeView = "vehicles";
 let latestState = null;
+const confirmRemoval = (name, restorable) => globalThis.confirm(
+  `Are you sure you want to remove this?\n\n${name}\n\n${restorable ? "You can restore it later." : "This removal cannot be undone."}`);
 
 function send(message) {
   return chrome.runtime.sendMessage(message).then((response) => {
@@ -47,6 +49,7 @@ const reasonLabel = (reason) => ({
   toll_request_available: "Turo toll request is available",
   no_matching_tolls: "No uniquely vehicle-confirmed tolls",
   no_tolls_selected: "No tolls selected",
+  date_range_not_synced: "Date range changed; run Find uncharged trips before batching",
   invalid_timestamp: "Invalid or ambiguous toll timestamp",
   invalid_or_nonpositive_amount: "Invalid toll amount",
   conflicting_vehicle_mapping: "Vehicle assignments conflict",
@@ -117,8 +120,10 @@ function inventoryRefreshButton(label = "Load E-ZPass list") {
 }
 function vehicleCard(vehicle, assignments, state) {
   const card = element("article", "card vehicle-card"); const heading = element("div", "card-row");
+  const removeVehicle = element("button", "danger", "Remove vehicle");
+  removeVehicle.type = "button"; removeVehicle.dataset.vehicleId = vehicle.vehicleId;
   heading.append(element("strong", "", vehicle.label || "Unnamed Turo vehicle"),
-    assignments.length ? element("span", "pill ready", "Configured") : element("span", "pill warning", "Mapping needed"));
+    assignments.length ? element("span", "pill ready", "Configured") : element("span", "pill warning", "Mapping needed"), removeVehicle);
   card.append(heading);
   if (vehicle.sourcePlate) {
     const plate = element("div", "source-plate");
@@ -210,7 +215,7 @@ function tripCard(draft, state) {
   const incompleteQueries = tripReports.filter((report) => report.status === "search_incomplete").length;
   const completedQueries = tripReports.filter((report) => report.complete === true).length;
   const queryText = tripReports.length
-    ? `${completedQueries}/${tripReports.length} identifiers searched · ${incompleteQueries} search-incomplete · ${unavailableQueries} unavailable · ${tripReports.reduce((sum, item) => sum + (item.recordCount || 0), 0)} filtered toll rows`
+    ? `${completedQueries}/${tripReports.length} identifiers searched · ${tripReports.reduce((sum, item) => sum + (item.pageCount || 0), 0)} result pages · ${tripReports.reduce((sum, item) => sum + (item.recordCount || 0), 0)} filtered toll rows · ${draft.tolls.length} matched toll${draft.tolls.length === 1 ? "" : "s"} · ${incompleteQueries} search-incomplete · ${unavailableQueries} unavailable`
     : "No confirmed identifier search completed";
   card.append(heading, element("p", "internal-id", `Turo internal vehicle ID: ${draft.vehicleId} — not an E-ZPass tag`), dates,
     element("p", "muted", queryText), tolls, element("p", "", `${draft.selectedTollIds.length} selected · ${moneyCents(draft.totalCents)} · ${draft.evidenceIds?.length || 0} evidence images`));
@@ -239,7 +244,9 @@ function batchCard(draft, state) {
   const row = element("div", "card-row");
   const approval = checkbox("approve-trip", draft.reservationId, draft.tripApproved, !draft.batchReady);
   const label = element("label", "trip-title"); label.append(approval, element("strong", "", `Trip ${draft.reservationId}`));
-  row.append(label, element("span", `pill ${draft.tripApproved ? "ready" : "warning"}`, draft.tripApproved ? "Approved" : draft.batchReady ? "Approval required" : "Evidence incomplete"));
+  const remove = element("button", "danger", "Remove from batch"); remove.type = "button";
+  remove.dataset.removeBatchTrip = draft.reservationId;
+  row.append(label, element("span", `pill ${draft.tripApproved ? "ready" : "warning"}`, draft.tripApproved ? "Approved" : draft.batchReady ? "Approval required" : "Evidence incomplete"), remove);
   card.append(row, element("p", "", `${draft.selectedTollIds.length} tolls · ${moneyCents(draft.totalCents)} · revision ${draft.revisionHash}`));
   const evidence = (state.evidence || []).filter((item) => String(item.reservationId) === String(draft.reservationId) && item.status !== "stale" && item.status !== "deleted");
   const gallery = element("div", "evidence-gallery");
@@ -252,6 +259,11 @@ function batchCard(draft, state) {
   }
   if (!evidence.length) gallery.append(element("p", "muted", "No evidence captured."));
   card.append(gallery);
+  const sendOne = element("button", "secondary", "Send this invoice");
+  sendOne.type = "button"; sendOne.disabled = true; sendOne.title = "Turo submission is disabled until the authenticated send flow is verified.";
+  const preview = element("button", "secondary", "Review this invoice"); preview.type = "button";
+  preview.disabled = !draft.tripApproved; preview.dataset.previewTrip = draft.reservationId;
+  card.append(preview, sendOne);
   return card;
 }
 async function hydrateEvidencePreviews() {
@@ -345,6 +357,10 @@ function render(state, { restore = false } = {}) {
   el.tripCount.textContent = trips.length; el.tollCount.textContent = tolls.length; el.draftCount.textContent = drafts.length; el.selectedTotal.textContent = moneyCents(summary.totalCents);
   el.batchTrips.textContent = `${summary.tripCount} trips`; el.batchTolls.textContent = `${summary.tollCount} tolls`; el.batchTotal.textContent = moneyCents(summary.totalCents);
   el.navBatchCount.textContent = summary.tripCount; el.graceMinutes.value = String(state.settings?.graceMinutes || 0);
+  const range = state.settings?.tripDateRange || {};
+  el.tripStartDate.value = range.startDate || ""; el.tripEndDate.value = range.endDate || "";
+  el.tripDateStatus.textContent = state.dateRangeNeedsSync ? "Date range changed — refresh required" : range.startDate || range.endDate
+    ? `Trip end ${range.startDate || "any date"} through ${range.endDate || "any date"}` : "All completed trips";
   el.lastSync.textContent = state.lastSync ? `Synced ${new Date(state.lastSync).toLocaleString()}` : "Never synced";
   for (const [source, target] of [["turo", el.turoCompleteness], ["ezpass", el.ezpassCompleteness]]) {
     const run = state.collectionRuns?.[source]; target.textContent = collectionLabel(source, run); target.className = run?.complete ? "complete" : "incomplete";
@@ -353,9 +369,15 @@ function render(state, { restore = false } = {}) {
   el.coverageStatus.textContent = coverage.text;
   el.coverageStatus.className = coverage.warning ? "incomplete" : "complete";
   renderIdentifierInventory(state);
-  el.vehicleOptions.replaceChildren(...(state.fleet?.vehicles || []).map((vehicle) => { const option = document.createElement("option"); option.value = vehicle.vehicleId; option.label = [vehicle.label || vehicle.vehicleId, vehicle.sourcePlate].filter(Boolean).join(" · "); return option; }));
-  fill(el.assignmentList, (state.fleet?.vehicles || []).map((vehicle) => vehicleCard(vehicle,
+  const hidden = new Set(state.fleet?.hiddenVehicleIds || []);
+  el.vehicleOptions.replaceChildren(...(state.fleet?.vehicles || []).filter((vehicle) => !hidden.has(String(vehicle.vehicleId))).map((vehicle) => { const option = document.createElement("option"); option.value = vehicle.vehicleId; option.label = [vehicle.label || vehicle.vehicleId, vehicle.sourcePlate].filter(Boolean).join(" · "); return option; }));
+  fill(el.assignmentList, (state.fleet?.vehicles || []).filter((vehicle) => !hidden.has(String(vehicle.vehicleId))).map((vehicle) => vehicleCard(vehicle,
     (state.fleet?.assignments || []).filter((assignment) => String(assignment.vehicleId) === String(vehicle.vehicleId)), state)), "Sync Turo history to discover vehicles.");
+  fill(el.hiddenVehicleList, (state.fleet?.vehicles || []).filter((vehicle) => hidden.has(String(vehicle.vehicleId))).map((vehicle) => {
+    const card = element("article", "card card-row");
+    const restore = element("button", "secondary", "Restore vehicle"); restore.type = "button"; restore.dataset.restoreVehicleId = vehicle.vehicleId;
+    card.append(element("strong", "", vehicle.label || vehicle.sourcePlate || vehicle.vehicleId), restore); return card;
+  }), "No removed vehicles.");
   fill(el.tripsList, drafts.map((draft) => tripCard(draft, state)), "No completed trips loaded yet.");
 
   const tripBlockers = drafts.filter((item) => !item.selectable).map((draft) => {
@@ -396,6 +418,9 @@ function render(state, { restore = false } = {}) {
   el.goEvidenceButton.disabled = summary.tripCount === 0;
   const selectedDrafts = drafts.filter((draft) => draft.selected);
   el.approveBatchButton.disabled = !selectedDrafts.length || selectedDrafts.some((draft) => !draft.tripApproved || !draft.batchReady);
+  el.sendBatchButton.disabled = true;
+  el.previewBatchButton.disabled = !selectedDrafts.length || selectedDrafts.some((draft) => !draft.tripApproved || !draft.batchReady);
+  el.submissionPreview.replaceChildren();
   hydrateEvidencePreviews();
   restoreDraft(formDraft);
 }
@@ -457,8 +482,23 @@ async function handleMappingPrefill(event) {
 el.assignmentList.addEventListener("click", async (event) => {
   if (event.target?.dataset?.refreshIdentifiers === "true") { await refreshIdentifierInventory(); return; }
   if (await handleMappingPrefill(event)) return;
+  const vehicleId = event.target?.dataset?.vehicleId;
+  if (vehicleId) {
+    const vehicle = latestState.fleet.vehicles.find((item) => String(item.vehicleId) === vehicleId);
+    if (!confirmRemoval(`Vehicle ${vehicle?.label || vehicleId} and its trips from this workspace`, true)) return;
+    try { const { state } = await send({ type: "HIDE_VEHICLE", vehicleId }); render(state); setStatus("Vehicle removed from the workspace. Its synced records and mappings are retained."); }
+    catch (error) { setStatus(error.message, "error"); }
+    return;
+  }
   const id = event.target?.dataset?.assignmentId; if (!id) return;
+  const assignment = latestState.fleet.assignments.find((item) => item.id === id);
+  if (!confirmRemoval(`${assignment?.kind || "Identifier"} ${assignment?.identifier || id} assignment`, false)) return;
   try { const { state } = await send({ type: "DELETE_ASSIGNMENT", id }); render(state); setStatus("Assignment removed."); }
+  catch (error) { setStatus(error.message, "error"); }
+});
+el.hiddenVehicleList.addEventListener("click", async (event) => {
+  const vehicleId = event.target?.dataset?.restoreVehicleId; if (!vehicleId) return;
+  try { const { state } = await send({ type: "RESTORE_VEHICLE", vehicleId }); render(state); setStatus("Vehicle restored; trips and Batch recalculated."); }
   catch (error) { setStatus(error.message, "error"); }
 });
 el.tollReviewList.addEventListener("click", (event) => {
@@ -468,12 +508,22 @@ el.tripsList.addEventListener("change", async (event) => { if (event.target?.dat
 el.tripsList.addEventListener("click", async (event) => {
   if (event.target?.dataset?.navigateView) { showView(event.target.dataset.navigateView); return; }
   if (event.target?.dataset?.action !== "trip") return;
+  if (event.target.dataset.selected !== "true" && !confirmRemoval(`Trip ${event.target.dataset.reservationId} from Batch`, true)) return;
   try { const { state } = await send({ type: "SET_TRIP_SELECTION", reservationId: event.target.dataset.reservationId,
     selected: event.target.dataset.selected === "true" }); render(state); setStatus(event.target.dataset.selected === "true" ? "Trip added to Batch." : "Trip removed from Batch."); }
   catch (error) { setStatus(error.message, "error"); }
 });
 el.selectAllButton.addEventListener("click", async () => { try { const { state } = await send({ type: "SELECT_ALL_READY", selected: true }); render(state); setStatus("All ready trips restored to Batch."); } catch (error) { setStatus(error.message, "error"); } });
 el.graceMinutes.addEventListener("change", async () => { try { const { state } = await send({ type: "UPDATE_SETTINGS", settings: { graceMinutes: Number(el.graceMinutes.value) } }); render(state); setStatus("Grace period updated; selections were revalidated."); } catch (error) { setStatus(error.message, "error"); } });
+el.tripDateForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    const { state } = await send({ type: "UPDATE_SETTINGS", settings: { tripDateRange: {
+      startDate: el.tripStartDate.value, endDate: el.tripEndDate.value
+    } } });
+    render(state); setStatus("Date range applied. Use Find uncharged trips to refresh this range.");
+  } catch (error) { setStatus(error.message, "error"); }
+});
 async function refreshIdentifierInventory() {
   el.refreshIdentifiersButton.disabled = true; setStatus("Loading the exact tag and plate list from E-ZPass…", "busy");
   try { const { state, inventory } = await send({ type: "REFRESH_EZPASS_IDENTIFIERS" }); render(state, { restore: true });
@@ -495,13 +545,38 @@ el.batchList.addEventListener("change", async (event) => {
   } catch (error) { setStatus(error.message, "error"); }
 });
 el.batchList.addEventListener("click", async (event) => {
+  const previewTrip = event.target?.dataset?.previewTrip;
+  if (previewTrip) { await showSubmissionPreview(previewTrip); return; }
+  const reservationId = event.target?.dataset?.removeBatchTrip;
+  if (reservationId) {
+    if (!confirmRemoval(`Trip ${reservationId} from Batch`, true)) return;
+    try { const { state } = await send({ type: "SET_TRIP_SELECTION", reservationId, selected: false }); render(state); setStatus(`Trip ${reservationId} removed from Batch. Restore it on Trips.`); }
+    catch (error) { setStatus(error.message, "error"); }
+    return;
+  }
   const id = event.target?.dataset?.evidenceId; if (!id) return;
+  if (!confirmRemoval(`Evidence image ${id}`, false)) return;
   try { const { state } = await send({ type: "DELETE_EVIDENCE", id }); render(state); setStatus("Evidence removed; approvals were invalidated."); }
   catch (error) { setStatus(error.message, "error"); }
 });
+async function showSubmissionPreview(reservationId = null) {
+  try {
+    const { preview } = await send({ type: "PREVIEW_SUBMISSION", reservationId });
+    const cards = preview.map((item) => {
+      const card = element("article", "card");
+      card.append(element("strong", "", `Trip ${item.reservationId} · ${moneyCents(item.totalCents)}`),
+        element("p", "", `${item.tolls.length} selected tolls · ${item.evidenceIds.length} evidence images`));
+      for (const toll of item.tolls) card.append(element("p", "", `${toll.plaza || "Toll"} · ${moneyCents(toll.amountCents)} · ${formatTime(toll.timestampMs, latestState.settings?.timeZone)}`));
+      return card;
+    });
+    el.submissionPreview.replaceChildren(...cards);
+    setStatus("Submission details displayed for review. Sending remains disabled until the Turo adapter is verified.");
+  } catch (error) { setStatus(error.message, "error"); }
+}
+el.previewBatchButton.addEventListener("click", () => showSubmissionPreview());
 el.approveBatchButton.addEventListener("click", async () => {
   try { const { state } = await send({ type: "APPROVE_BATCH" }); render(state); setStatus("The unchanged batch is approved locally."); }
   catch (error) { setStatus(error.message, "error"); }
 });
-el.clearButton.addEventListener("click", async () => { try { const { state } = await send({ type: "CLEAR_LOCAL_DATA" }); render(state, { restore: true }); showView("vehicles"); setStatus("Local records, fleet assignments, and drafts cleared."); } catch (error) { setStatus(error.message, "error"); } });
+el.clearButton.addEventListener("click", async () => { if (!confirmRemoval("All local trips, tolls, mappings, drafts, and evidence", false)) return; try { const { state } = await send({ type: "CLEAR_LOCAL_DATA" }); render(state, { restore: true }); showView("vehicles"); setStatus("Local records, fleet assignments, and drafts cleared."); } catch (error) { setStatus(error.message, "error"); } });
 send({ type: "GET_STATE" }).then(({ state }) => { render(state, { restore: true }); showView(state.fleet?.assignments?.length ? "trips" : "vehicles"); setStatus("Ready."); }).catch((error) => setStatus(error.message, "error"));

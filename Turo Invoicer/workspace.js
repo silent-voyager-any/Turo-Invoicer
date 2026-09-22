@@ -42,7 +42,7 @@ function sentFingerprints(ledger) {
 export function buildTripWorkspace({
   trips = [], reconciliation = null, previousDrafts = [], tripEligibility = {},
   collectionRuns = {}, submissionLedger = [], evidence = [], timeZone = "America/New_York",
-  activeQueryIds = null
+  activeQueryIds = null, dateRangeNeedsSync = false
 } = {}) {
   const old = previousByTrip(previousDrafts);
   const matches = confirmedMatches(reconciliation);
@@ -63,6 +63,7 @@ export function buildTripWorkspace({
       ? (prior.selectedTollIds || []).map(text).filter((id) => validIds.has(id))
       : tolls.map((toll) => toll.id);
     const blockingReasons = [];
+    if (dateRangeNeedsSync) blockingReasons.push("date_range_not_synced");
     if (!runComplete(collectionRuns, "turo")) blockingReasons.push("turo_collection_incomplete");
     const tripQueryReports = Array.isArray(collectionRuns?.ezpass?.queryReports)
       ? collectionRuns.ezpass.queryReports.filter((report) => text(report.reservationId) === reservationId &&

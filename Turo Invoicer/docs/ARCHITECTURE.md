@@ -75,6 +75,8 @@ Fleet assignments associate a Turo internal vehicle ID with an E-ZPass tag or pl
 
 Schema 6 preserves schema-5 records and evidence, adds the sanitized E-ZPass identifier inventory under `fleet`, automatically includes newly ready trips in Batch, and records explicit user removal. Drafts retain evidence coverage, revision hashes, individual approval, and immutable batch approval. Screenshot blobs live in IndexedDB; reduced evidence metadata remains in extension storage. Submission stays fail-closed until the Turo upload adapter is verified.
 
+Schema 7 retains the same source snapshot while adding `fleet.hiddenVehicleIds`, `settings.tripDateRange`, saved draft choices across temporary vehicle/date filters, and date-scope provenance on collection runs. A changed range blocks batching until a fresh scoped sync. The dashboard can preview proposed individual or selected-batch submissions, but send operations remain fail-closed until authenticated composer and success fixtures exist.
+
 ## Internal message reference
 
 These are internal extension messages, not a public web API.
